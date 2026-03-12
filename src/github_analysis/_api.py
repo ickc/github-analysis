@@ -1,82 +1,125 @@
-"""Low-level wrapper around the gh CLI."""
+"""Low-level wrapper around the GitHub REST API using PyGithub."""
 
 from __future__ import annotations
 
-import json
-import subprocess
+from functools import lru_cache
 import time
+from pathlib import Path
 from typing import Any
 
+from github import Auth, Github
+from github.GithubException import GithubException, RateLimitExceededException
 
-def _run_gh(args: list[str]) -> str:
-    result = subprocess.run(
-        ["gh"] + args,
-        capture_output=True,
-        text=True,
-        check=True,
+_PER_PAGE = 100
+_HOSTS_PATH = Path.home() / ".config" / "gh" / "hosts.yml"
+
+
+def _token_from_gh_config() -> str | None:
+    if not _HOSTS_PATH.exists():
+        return None
+
+    in_github_dot_com = False
+    for raw_line in _HOSTS_PATH.read_text().splitlines():
+        line = raw_line.rstrip()
+        if not line:
+            continue
+        if not line.startswith(" "):
+            in_github_dot_com = line.strip() == "github.com:"
+            continue
+        if in_github_dot_com and line.strip().startswith("oauth_token:"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+
+def _resolve_token() -> str:
+    import os
+
+    for env_var in ("GITHUB_TOKEN", "GH_TOKEN"):
+        token = os.environ.get(env_var)
+        if token:
+            return token
+
+    token = _token_from_gh_config()
+    if token:
+        return token
+
+    raise RuntimeError(
+        "No GitHub token found. Set GITHUB_TOKEN or GH_TOKEN, or login with the gh CLI "
+        "so ~/.config/gh/hosts.yml contains an oauth_token."
     )
-    return result.stdout
 
 
-def _parse_pages(raw: str, response_key: str | None) -> list[Any]:
-    """Parse concatenated JSON values from gh api --paginate output.
-
-    raw_decode(s, idx) returns (object, end) where end is the *absolute* index
-    in s after the decoded value — not a relative offset. We assign pos = end
-    directly rather than pos += end.
-    """
-    items: list[Any] = []
-    decoder = json.JSONDecoder()
-    pos = 0
-    while pos < len(raw):
-        while pos < len(raw) and raw[pos].isspace():
-            pos += 1
-        if pos >= len(raw):
-            break
-        obj, pos = decoder.raw_decode(raw, pos)  # pos = absolute end of this value
-        if response_key and isinstance(obj, dict):
-            items.extend(obj.get(response_key, []))
-        elif isinstance(obj, list):
-            items.extend(obj)
-        else:
-            items.append(obj)
-    return items
+@lru_cache(maxsize=1)
+def _client() -> Github:
+    return Github(auth=Auth.Token(_resolve_token()), per_page=_PER_PAGE)
 
 
-def gh_api(endpoint: str, **params: str) -> Any:
+def _request(
+    endpoint: str,
+    *,
+    params: dict[str, Any] | None = None,
+    retry_on_rate_limit: bool = True,
+) -> Any:
+    requester = _client()._Github__requester
+    path = endpoint if endpoint.startswith("/") else f"/{endpoint}"
+
+    for attempt in range(2):
+        try:
+            _, payload = requester.requestJsonAndCheck("GET", path, parameters=params)
+            return payload
+        except RateLimitExceededException:
+            if attempt == 0 and retry_on_rate_limit:
+                time.sleep(60)
+                continue
+            raise
+        except GithubException as exc:
+            if attempt == 0 and retry_on_rate_limit and exc.status == 403:
+                time.sleep(60)
+                continue
+            raise
+
+    return None
+
+
+def github_api(endpoint: str, **params: str) -> Any:
     """Single GET request to the GitHub API."""
-    args = ["api", "-X", "GET", endpoint]
-    for k, v in params.items():
-        args += ["-f", f"{k}={v}"]
-    return json.loads(_run_gh(args))
+    return _request(endpoint, params=params)
 
 
-def gh_api_paginate(
+def github_api_paginate(
     endpoint: str,
     response_key: str | None = None,
     retry_on_rate_limit: bool = True,
     **params: str,
 ) -> list[Any]:
-    """Paginated GET requests returning all items.
+    """Paginated GET requests returning all items."""
+    items: list[Any] = []
+    page = 1
 
-    Args:
-        endpoint: GitHub API endpoint path.
-        response_key: If the response is a dict, extract items from this key
-            (e.g. "workflow_runs", "jobs"). If None, expects a direct list.
-        retry_on_rate_limit: Sleep and retry once on HTTP 429/403 rate limit.
-        **params: Query parameters passed as -f key=value to gh.
-    """
-    args = ["api", "-X", "GET", "--paginate", endpoint]
-    for k, v in params.items():
-        args += ["-f", f"{k}={v}"]
+    while True:
+        payload = _request(
+            endpoint,
+            params={**params, "per_page": str(_PER_PAGE), "page": str(page)},
+            retry_on_rate_limit=retry_on_rate_limit,
+        )
 
-    for attempt in range(2):
-        try:
-            raw = _run_gh(args)
-            return _parse_pages(raw, response_key)
-        except subprocess.CalledProcessError as e:
-            if attempt == 0 and retry_on_rate_limit and "rate limit" in e.stderr.lower():
-                time.sleep(60)
-                continue
-            raise
-    return []  # unreachable
+        if response_key is None:
+            if not isinstance(payload, list):
+                raise TypeError(f"Expected list payload for {endpoint}, got {type(payload)!r}")
+            batch = payload
+        else:
+            if not isinstance(payload, dict):
+                raise TypeError(f"Expected dict payload for {endpoint}, got {type(payload)!r}")
+            batch = payload.get(response_key, [])
+            if not isinstance(batch, list):
+                raise TypeError(
+                    f"Expected list payload under response_key={response_key!r} "
+                    f"for {endpoint}, got {type(batch)!r}"
+                )
+
+        items.extend(batch)
+        if len(batch) < _PER_PAGE:
+            break
+        page += 1
+
+    return items

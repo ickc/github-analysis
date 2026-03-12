@@ -80,6 +80,8 @@ def _jobs_df(org: str, cache_dir: Path) -> pd.DataFrame:
     for j in rows:
         run_ms = _duration_ms(j.get("started_at"), j.get("completed_at"))
         queue_ms = _duration_ms(j.get("created_at"), j.get("started_at"))
+        if queue_ms is not None:
+            queue_ms = max(queue_ms, 0)
         records.append(
             {
                 "job_id": j["id"],
@@ -106,6 +108,19 @@ def _jobs_df(org: str, cache_dir: Path) -> pd.DataFrame:
     runs_df = _runs_df(org, cache_dir)[["run_id", "workflow_path"]].drop_duplicates()
     df = df.merge(runs_df, on="run_id", how="left")
     return df
+
+
+def _hosted_jobs_df(org: str, cache_dir: Path) -> pd.DataFrame:
+    """Cached jobs limited to GitHub-hosted runners.
+
+    GitHub's exported Actions metrics tables only include hosted activity.
+    Self-hosted jobs still exist in the raw API payloads, but they are omitted
+    from the reference CSV snapshots under data/.
+    """
+    df = _jobs_df(org, cache_dir)
+    if df.empty:
+        return df
+    return df[df["runner_type"] == "hosted"].copy()
 
 
 def _runs_df(org: str, cache_dir: Path) -> pd.DataFrame:
@@ -140,7 +155,7 @@ def _runs_df(org: str, cache_dir: Path) -> pd.DataFrame:
 
 def usage_workflows(org: str, cache_dir: Path) -> pd.DataFrame:
     """Per-workflow usage, grouped by (workflow_path, repo, runner_type, runtime_os)."""
-    df = _jobs_df(org, cache_dir)
+    df = _hosted_jobs_df(org, cache_dir)
     if df.empty:
         return pd.DataFrame()
 
@@ -159,7 +174,7 @@ def usage_workflows(org: str, cache_dir: Path) -> pd.DataFrame:
 
 def usage_jobs(org: str, cache_dir: Path) -> pd.DataFrame:
     """Per-job usage, grouped by (job_name, workflow_path, repo, runner_type, runner_labels)."""
-    df = _jobs_df(org, cache_dir)
+    df = _hosted_jobs_df(org, cache_dir)
     if df.empty:
         return pd.DataFrame()
 
@@ -177,7 +192,7 @@ def usage_jobs(org: str, cache_dir: Path) -> pd.DataFrame:
 
 def usage_repositories(org: str, cache_dir: Path) -> pd.DataFrame:
     """Per-repository usage."""
-    df = _jobs_df(org, cache_dir)
+    df = _hosted_jobs_df(org, cache_dir)
     if df.empty:
         return pd.DataFrame()
 
@@ -195,7 +210,7 @@ def usage_repositories(org: str, cache_dir: Path) -> pd.DataFrame:
 
 def usage_runtime_os(org: str, cache_dir: Path) -> pd.DataFrame:
     """Per-OS usage."""
-    df = _jobs_df(org, cache_dir)
+    df = _hosted_jobs_df(org, cache_dir)
     if df.empty:
         return pd.DataFrame()
 
@@ -213,7 +228,7 @@ def usage_runtime_os(org: str, cache_dir: Path) -> pd.DataFrame:
 
 def usage_runner_type(org: str, cache_dir: Path) -> pd.DataFrame:
     """Per-runner-type usage."""
-    df = _jobs_df(org, cache_dir)
+    df = _hosted_jobs_df(org, cache_dir)
     if df.empty:
         return pd.DataFrame()
 
@@ -259,8 +274,12 @@ def _workflow_run_durations(org: str, cache_dir: Path) -> pd.DataFrame:
 def perf_workflows(org: str, cache_dir: Path) -> pd.DataFrame:
     """Per-workflow performance metrics."""
     run_times = _workflow_run_durations(org, cache_dir)
-    jobs = _jobs_df(org, cache_dir)
+    jobs = _hosted_jobs_df(org, cache_dir)
     if run_times.empty or jobs.empty:
+        return pd.DataFrame()
+
+    run_times = run_times[run_times["run_id"].isin(set(jobs["run_id"]))].copy()
+    if run_times.empty:
         return pd.DataFrame()
 
     g = run_times.groupby(["workflow_path", "repo"])
@@ -287,7 +306,9 @@ def perf_workflows(org: str, cache_dir: Path) -> pd.DataFrame:
 
 def perf_jobs(org: str, cache_dir: Path) -> pd.DataFrame:
     """Per-job performance metrics."""
-    df = _jobs_df(org, cache_dir)
+    df = _hosted_jobs_df(org, cache_dir)
+    if df.empty:
+        return pd.DataFrame()
     df = df.dropna(subset=["run_ms", "queue_ms"])
     if df.empty:
         return pd.DataFrame()
@@ -308,7 +329,9 @@ def perf_jobs(org: str, cache_dir: Path) -> pd.DataFrame:
 
 def perf_repositories(org: str, cache_dir: Path) -> pd.DataFrame:
     """Per-repository performance metrics."""
-    df = _jobs_df(org, cache_dir)
+    df = _hosted_jobs_df(org, cache_dir)
+    if df.empty:
+        return pd.DataFrame()
     df = df.dropna(subset=["run_ms", "queue_ms"])
     if df.empty:
         return pd.DataFrame()
@@ -329,7 +352,9 @@ def perf_repositories(org: str, cache_dir: Path) -> pd.DataFrame:
 
 def perf_runtime_os(org: str, cache_dir: Path) -> pd.DataFrame:
     """Per-OS performance metrics."""
-    df = _jobs_df(org, cache_dir)
+    df = _hosted_jobs_df(org, cache_dir)
+    if df.empty:
+        return pd.DataFrame()
     df = df.dropna(subset=["run_ms", "queue_ms"])
     if df.empty:
         return pd.DataFrame()
@@ -350,7 +375,9 @@ def perf_runtime_os(org: str, cache_dir: Path) -> pd.DataFrame:
 
 def perf_runner_type(org: str, cache_dir: Path) -> pd.DataFrame:
     """Per-runner-type performance metrics."""
-    df = _jobs_df(org, cache_dir)
+    df = _hosted_jobs_df(org, cache_dir)
+    if df.empty:
+        return pd.DataFrame()
     df = df.dropna(subset=["run_ms", "queue_ms"])
     if df.empty:
         return pd.DataFrame()

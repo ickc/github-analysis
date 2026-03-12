@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
-from ._api import gh_api, gh_api_paginate
+from ._api import github_api_paginate
 
 log = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 
 def list_org_repos(org: str) -> list[dict]:
     """Return all repos in the org (public + private, all types)."""
-    return gh_api_paginate(f"/orgs/{org}/repos", type="all", per_page="100")
+    return github_api_paginate(f"/orgs/{org}/repos", type="all")
 
 
 def list_workflow_runs(
@@ -38,7 +38,7 @@ def list_workflow_runs(
             params["created"] = f">={s}"
         elif u:
             params["created"] = f"<={u}"
-    return gh_api_paginate(
+    return github_api_paginate(
         f"/repos/{org}/{repo}/actions/runs",
         response_key="workflow_runs",
         **params,
@@ -47,11 +47,10 @@ def list_workflow_runs(
 
 def list_run_jobs(org: str, repo: str, run_id: int) -> list[dict]:
     """Return all jobs for a specific workflow run."""
-    return gh_api_paginate(
+    return github_api_paginate(
         f"/repos/{org}/{repo}/actions/runs/{run_id}/jobs",
         response_key="jobs",
         filter="all",
-        per_page="100",
     )
 
 
