@@ -5,8 +5,31 @@ build-backend = "hatchling.build"
 [project]
 name = "github-analysis"
 version = "0.1.0"
-description = "Reusable tools for GitHub analysis"
-requires-python = ">=3.10"
+description = "Reusable tools for GitHub Actions metrics analysis"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.9",
+    "pandas>=2.0",
+    "rich>=13.0",
+]
+
+[project.scripts]
+github-analysis = "github_analysis.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/github_analysis"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64"]
+
+[tool.pixi.pypi-dependencies]
+github-analysis = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+
+[tool.pixi.dependencies]
+python = ">=3.11"
+typer = ">=0.24.0,<0.25"
+pandas = ">=3.0.1,<4"
+rich = ">=14.3.3,<15"
