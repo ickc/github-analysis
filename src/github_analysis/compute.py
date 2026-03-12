@@ -71,8 +71,8 @@ def _duration_ms(start: str | None, end: str | None) -> float | None:
 # ---------------------------------------------------------------------------
 
 def _jobs_df(org: str, cache_dir: Path) -> pd.DataFrame:
-    """Flat DataFrame of all cached jobs with derived columns."""
-    rows = load_jobs(org, cache_dir)
+    """Flat DataFrame of completed cached jobs with derived columns."""
+    rows = [j for j in load_jobs(org, cache_dir) if j.get("status") == "completed"]
     if not rows:
         return pd.DataFrame()
 
@@ -234,34 +234,26 @@ def usage_runner_type(org: str, cache_dir: Path) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def _workflow_run_durations(org: str, cache_dir: Path) -> pd.DataFrame:
-    """Compute per-run wall-clock duration from job timestamps.
+    """Per-run wall-clock duration and failure flag, using run-level timestamps.
 
-    Wall-clock = max(job.completed_at) - min(job.started_at) across all jobs
-    in the run. Falls back to run-level updated_at - run_started_at if no jobs.
+    Duration = updated_at - run_started_at (mirrors the GitHub UI calculation).
+    has_failure = 1 if any job in the run concluded as 'failure'.
+    Only completed runs are included.
     """
+    runs = _runs_df(org, cache_dir)
+    if runs.empty:
+        return pd.DataFrame()
+
     jobs = _jobs_df(org, cache_dir)
-    if jobs.empty:
-        return pd.DataFrame()
+    failed_runs = set()
+    if not jobs.empty:
+        failed_runs = set(jobs.loc[jobs["is_failure"] == 1, "run_id"])
 
-    # Per-run: earliest start, latest completion
-    valid = jobs.dropna(subset=["started_at", "completed_at"])
-    if valid.empty:
-        return pd.DataFrame()
-
-    run_times = (
-        valid.groupby(["run_id", "repo", "workflow_path"])
-        .apply(
-            lambda g: pd.Series(
-                {
-                    "wall_ms": _duration_ms(g["started_at"].min(), g["completed_at"].max()),
-                    "has_failure": int(g["is_failure"].any()),
-                }
-            ),
-            include_groups=False,
-        )
-        .reset_index()
+    completed = runs[runs["conclusion"].notna() & (runs["conclusion"] != "")].copy()
+    completed["has_failure"] = completed["run_id"].isin(failed_runs).astype(int)
+    return completed[["run_id", "repo", "workflow_path", "run_duration_ms", "has_failure"]].rename(
+        columns={"run_duration_ms": "wall_ms"}
     )
-    return run_times
 
 
 def perf_workflows(org: str, cache_dir: Path) -> pd.DataFrame:

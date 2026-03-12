@@ -19,7 +19,12 @@ def _run_gh(args: list[str]) -> str:
 
 
 def _parse_pages(raw: str, response_key: str | None) -> list[Any]:
-    """Parse concatenated JSON values from gh api --paginate output."""
+    """Parse concatenated JSON values from gh api --paginate output.
+
+    raw_decode(s, idx) returns (object, end) where end is the *absolute* index
+    in s after the decoded value — not a relative offset. We assign pos = end
+    directly rather than pos += end.
+    """
     items: list[Any] = []
     decoder = json.JSONDecoder()
     pos = 0
@@ -28,8 +33,7 @@ def _parse_pages(raw: str, response_key: str | None) -> list[Any]:
             pos += 1
         if pos >= len(raw):
             break
-        obj, consumed = decoder.raw_decode(raw, pos)
-        pos += consumed
+        obj, pos = decoder.raw_decode(raw, pos)  # pos = absolute end of this value
         if response_key and isinstance(obj, dict):
             items.extend(obj.get(response_key, []))
         elif isinstance(obj, list):
@@ -40,10 +44,10 @@ def _parse_pages(raw: str, response_key: str | None) -> list[Any]:
 
 
 def gh_api(endpoint: str, **params: str) -> Any:
-    """Single request to the GitHub API."""
-    args = ["api", endpoint]
+    """Single GET request to the GitHub API."""
+    args = ["api", "-X", "GET", endpoint]
     for k, v in params.items():
-        args += ["-F", f"{k}={v}"]
+        args += ["-f", f"{k}={v}"]
     return json.loads(_run_gh(args))
 
 
@@ -53,18 +57,18 @@ def gh_api_paginate(
     retry_on_rate_limit: bool = True,
     **params: str,
 ) -> list[Any]:
-    """Paginated requests returning all items.
+    """Paginated GET requests returning all items.
 
     Args:
         endpoint: GitHub API endpoint path.
         response_key: If the response is a dict, extract items from this key
             (e.g. "workflow_runs", "jobs"). If None, expects a direct list.
         retry_on_rate_limit: Sleep and retry once on HTTP 429/403 rate limit.
-        **params: Query parameters passed as -F key=value to gh.
+        **params: Query parameters passed as -f key=value to gh.
     """
-    args = ["api", "--paginate", endpoint]
+    args = ["api", "-X", "GET", "--paginate", endpoint]
     for k, v in params.items():
-        args += ["-F", f"{k}={v}"]
+        args += ["-f", f"{k}={v}"]
 
     for attempt in range(2):
         try:
