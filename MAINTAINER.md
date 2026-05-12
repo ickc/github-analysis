@@ -8,7 +8,6 @@ Use `uv` from the repository root:
 
 ```bash
 uv sync
-uv run python -m compileall src bin
 uv build
 uv run twine check dist/*
 ```
@@ -62,7 +61,7 @@ should match the environment configured on PyPI.
 
 ```bash
 uv sync
-uv run python -m compileall src bin
+
 uv build
 uv run twine check dist/*
 pixi lock

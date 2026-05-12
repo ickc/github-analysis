@@ -167,7 +167,6 @@ Use `uv` for PyPI-oriented packaging and release checks:
 
 ```bash
 uv sync
-uv run python -m compileall src bin
 uv build
 ```
 
