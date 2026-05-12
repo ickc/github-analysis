@@ -25,6 +25,15 @@ uv sync
 uv run github-analysis --help
 ```
 
+The repository also includes a `pixi` environment. It mirrors the runtime
+dependencies in `[tool.pixi.dependencies]` and installs this package as an
+editable local PyPI dependency, so pixi users get dependencies from conda-forge:
+
+```bash
+pixi run help
+pixi run check
+```
+
 ## Authentication
 
 The CLI needs a GitHub token that can read Actions metadata for the target
@@ -154,12 +163,19 @@ configuration.
 
 ## Development
 
-This project uses `uv`:
+Use `uv` for PyPI-oriented packaging and release checks:
 
 ```bash
 uv sync
 uv run python -m compileall src bin
 uv build
+```
+
+Use `pixi` when you want a conda-forge solved development environment:
+
+```bash
+pixi run check
+pixi run help
 ```
 
 The package exposes the `github-analysis` console script via `pyproject.toml`.

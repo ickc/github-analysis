@@ -13,6 +13,14 @@ uv build
 uv run twine check dist/*
 ```
 
+Also check the pixi environment after dependency changes:
+
+```bash
+pixi lock
+pixi run check
+pixi run help
+```
+
 Inspect the contents before uploading:
 
 ```bash
@@ -47,19 +55,24 @@ should match the environment configured on PyPI.
 
 1. Update `version` in `pyproject.toml`.
 2. Update the README or changelog if user-facing behavior changed.
-3. Run local checks:
+3. If runtime dependencies changed, update both `[project.dependencies]` and
+   `[tool.pixi.dependencies]` in `pyproject.toml`, then regenerate `uv.lock`
+   and `pixi.lock`.
+4. Run local checks:
 
 ```bash
 uv sync
 uv run python -m compileall src bin
 uv build
 uv run twine check dist/*
+pixi lock
+pixi run check
 ```
 
-4. Commit the version/docs changes.
-5. Tag or create a GitHub Release for the same version, for example `v0.1.1`.
-6. Confirm the GitHub Actions release workflow publishes successfully.
-7. Verify the package page and install path:
+5. Commit the version/docs changes.
+6. Tag or create a GitHub Release for the same version, for example `v0.1.1`.
+7. Confirm the GitHub Actions release workflow publishes successfully.
+8. Verify the package page and install path:
 
 ```bash
 uv tool install --force github-analysis
