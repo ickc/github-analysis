@@ -5,8 +5,8 @@
 #   bin/verify.sh [<reference_dir> [<generated_dir>]]
 #
 # Defaults:
-#   reference_dir = <workspace>/data
-#   generated_dir = <workspace>/reports
+#   reference_dir = ./data
+#   generated_dir = ./reports
 #
 # Run recreate.sh first to generate the reports.
 
@@ -14,10 +14,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUBMODULE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-WORKSPACE_DIR="$(cd "${SUBMODULE_DIR}/.." && pwd)"
 
-REF_DIR="${1:-${WORKSPACE_DIR}/data}"
-GEN_DIR="${2:-${WORKSPACE_DIR}/reports}"
+REF_DIR="${1:-${SUBMODULE_DIR}/data}"
+GEN_DIR="${2:-${SUBMODULE_DIR}/reports}"
 
 PIXI="pixi run --manifest-path ${SUBMODULE_DIR}/pyproject.toml"
 

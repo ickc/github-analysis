@@ -1,89 +1,127 @@
 # github-analysis
 
-Reusable tooling for recreating GitHub Actions metrics tables from the GitHub API.
+Reusable tooling for GitHub Actions metrics analysis.
 
-This submodule is the public part of the workflow. It fetches raw workflow/job
-data with the GitHub REST API through `PyGithub`, caches the JSON locally, and
-computes CSV tables that mirror GitHub's Actions metrics exports.
+The package fetches workflow run and job data from the GitHub REST API, caches
+the raw JSON locally, computes CSV tables similar to GitHub's Actions metrics
+exports, and can build a static HTML dashboard from those CSVs.
 
-## What lives here
+## Install
 
-- `src/github_analysis/`: the library and CLI
-- `bin/recreate.sh`: end-to-end command sequence to fetch raw data and write CSVs
-- `bin/verify.sh`: compare generated CSVs against the private snapshot in `../data/`
-- `bin/compare.py`: normalization-aware verifier run inside the submodule's `pixi` environment
-
-## Quick start
-
-From the private workspace root, initialize the submodule first:
+This repository uses `pixi` for local development:
 
 ```bash
-git submodule update --init --recursive
-```
-
-Then run the reproducible workflow from inside the submodule:
-
-```bash
-cd github-analysis
-bin/recreate.sh
-bin/verify.sh
-```
-
-The recreate script uses the `pixi` environment defined by this submodule and
-writes its artifacts into the parent workspace:
-
-- cache: `../cache/`
-- generated reports: `../reports/`
-
-Default settings:
-
-- org: `UniExeterRSE`
-- period: `last-year`
-
-You can override them with environment variables:
-
-```bash
-cd github-analysis
-ORG=UniExeterRSE PERIOD=last-year bin/recreate.sh
+pixi run --manifest-path ./pyproject.toml github-analysis --help
 ```
 
 Authentication:
 
 - preferred: set `GITHUB_TOKEN` or `GH_TOKEN`
 - fallback: if you are already logged into the `gh` CLI, the library reads
-  `~/.config/gh/hosts.yml` directly and reuses that token without invoking `gh`
+  `~/.config/gh/hosts.yml` and reuses that token
 
-## What the scripts do
+## CLI Workflow
 
-`bin/recreate.sh` runs:
+Fetch raw cache data:
 
 ```bash
 pixi run --manifest-path ./pyproject.toml github-analysis fetch \
-  --org UniExeterRSE \
+  --org example-org \
   --period last-year \
-  --cache-dir ../cache
-
-pixi run --manifest-path ./pyproject.toml github-analysis report \
-  --org UniExeterRSE \
-  --cache-dir ../cache \
-  --output-dir ../reports
+  --cache-dir ./cache
 ```
 
-`bin/verify.sh` runs the Python comparator in the same `pixi` environment:
+Generate CSV reports:
 
 ```bash
-pixi run --manifest-path ./pyproject.toml python ./bin/compare.py ../data ../reports
+pixi run --manifest-path ./pyproject.toml github-analysis report \
+  --org example-org \
+  --cache-dir ./cache \
+  --output-dir ./reports
 ```
 
-## Notes on comparison
+Build a dashboard:
 
-The private `../data/` directory is a manual GitHub UI export committed in the
-private parent repository. Exact byte-for-byte equality is not expected because:
+```bash
+pixi run --manifest-path ./pyproject.toml github-analysis dashboard \
+  --org example-org \
+  --data-dir ./reports \
+  --cache-dir ./cache \
+  --output ./docs/index.html
+```
 
-- the snapshot can contain rows for repos that are now private, deleted, or no
-  longer visible in the org (`Repository not found`, removed repos, etc.)
-- new workflow runs may have happened between the snapshot export and your API fetch
-- the exported UI timings are stable at about whole-second precision, not exact milliseconds
+Show a table in the terminal:
 
-The verifier therefore checks for structural compatibility and reports which
-differences are explained by visibility/snapshot drift.
+```bash
+pixi run --manifest-path ./pyproject.toml github-analysis show \
+  usage workflows \
+  --org example-org \
+  --cache-dir ./cache
+```
+
+## Config-Driven Workflow
+
+For repeatable organization-specific analyses, keep private organization names,
+paths, billing caps, and related-repository quirks in a TOML config outside this
+library:
+
+```toml
+[analysis]
+org = "example-org"
+period = "last-year"
+cache_dir = "cache"
+reports_dir = "reports"
+data_dir = "reports"
+reference_data_dir = "data"
+output_html = "docs/index.html"
+summary_json = "docs/summary.json"
+
+[dashboard]
+title = "GitHub Actions Usage Analysis"
+period_label = "last year"
+plan_minutes = 3000
+
+[os_multipliers]
+linux = 1
+windows = 2
+macos = 10
+
+[[related_repositories]]
+owner = "new-owner"
+repo = "moved-repo"
+label = "moved-repo"
+transfer_date = "2026-01-20"
+billing_owner_after = "new-owner"
+note_html = "example note rendered in the dashboard"
+```
+
+Run the complete workflow from that config:
+
+```bash
+pixi run --manifest-path ./pyproject.toml github-analysis recreate \
+  --config ../analysis.toml
+```
+
+`recreate` fetches the main organization, fetches configured related
+repositories, writes CSV reports, and builds the static dashboard.
+
+## Repository Layout
+
+- `src/github_analysis/`: library and CLI
+- `bin/recreate.sh`: shell wrapper around fetch/report or config-driven recreate
+- `bin/verify.sh`: compare generated CSVs against a reference metrics snapshot
+- `bin/compare.py`: normalization-aware CSV comparator
+
+## Comparison Notes
+
+`bin/compare.py` compares generated CSVs with a reference directory containing
+GitHub UI metrics exports. Exact byte-for-byte equality is not expected because:
+
+- a reference snapshot can contain rows for repositories that are no longer
+  visible to the token used for a fresh API fetch
+- new workflow runs may have happened after the reference snapshot was exported
+- exported UI timings are stable at about whole-second precision, not exact
+  milliseconds
+
+The verifier checks structural compatibility and reports likely visibility or
+snapshot drift separately from unexpected missing shared rows.
