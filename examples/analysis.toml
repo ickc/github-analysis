@@ -1,0 +1,19 @@
+[analysis]
+org = "example-org"
+period = "last-year"
+cache_dir = "cache"
+reports_dir = "reports"
+data_dir = "reports"
+output_html = "docs/index.html"
+summary_json = "docs/summary.json"
+
+[dashboard]
+title = "GitHub Actions Usage Analysis"
+period_label = "last year"
+# Optional: set this if your organization has a monthly included-minutes cap.
+# plan_minutes = 3000
+
+[os_multipliers]
+linux = 1
+windows = 2
+macos = 10

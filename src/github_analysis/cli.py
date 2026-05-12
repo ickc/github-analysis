@@ -5,6 +5,7 @@ Commands:
   report     Compute and save usage + performance metric CSVs from cache.
   dashboard  Build a static HTML dashboard from generated CSVs.
   recreate   Fetch data, generate CSVs, and optionally build the dashboard.
+  compare    Compare generated CSVs with a reference metrics snapshot.
   show       Pretty-print a metrics table to the terminal.
 
 Example workflow:
@@ -25,6 +26,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from .compare import main as compare_reports
 from .compute import PERFORMANCE_TABLES, USAGE_TABLES
 from .dashboard import DashboardConfig, build_dashboard, load_dashboard_config
 from .raw import fetch_org, fetch_repo
@@ -243,19 +245,6 @@ def recreate(
         )
         console.print(f"[green]Done[/green]: fetched {len(repos)} repos")
 
-        for related in dashboard_config.related_repositories:
-            if not related.include_in_cache:
-                continue
-            console.print(f"[bold]Fetching related repo[/bold] {related.owner}/{related.repo}")
-            fetch_repo(
-                related.owner,
-                related.repo,
-                dashboard_config.cache_dir,
-                since=since,
-                until=until,
-                force=force,
-            )
-
     _write_reports(
         dashboard_config.org,
         dashboard_config.cache_dir,
@@ -269,6 +258,19 @@ def recreate(
             f"[green]Wrote[/green] {dashboard_config.output_html} "
             f"and {dashboard_config.summary_json}"
         )
+
+
+# ---------------------------------------------------------------------------
+# compare
+# ---------------------------------------------------------------------------
+
+@app.command()
+def compare(
+    reference_dir: Path = typer.Argument(..., help="Reference GitHub metrics CSV directory."),
+    generated_dir: Path = typer.Argument(..., help="Generated GitHub metrics CSV directory."),
+) -> None:
+    """Compare generated reports against a reference metrics snapshot."""
+    raise typer.Exit(compare_reports(reference_dir, generated_dir))
 
 
 # ---------------------------------------------------------------------------

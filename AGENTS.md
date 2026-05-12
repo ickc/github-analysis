@@ -1,12 +1,12 @@
 # Repository notes for future agents
 
-- Use `pixi` for all Python environment and task execution in this repository.
-- If `pixi` is unavailable, install it with:
-  - `curl -fsSL https://pixi.sh/install.sh | sh`
+- Use `uv` for Python environment, packaging, and task execution in this
+  repository.
 - Prefer commands of the form:
 
 ```bash
-pixi run --manifest-path /path/to/github-analysis/pyproject.toml python ...
+uv run python ...
+uv run github-analysis ...
 ```
 
 - Do not run bare `python` for project tasks unless the user explicitly asks for

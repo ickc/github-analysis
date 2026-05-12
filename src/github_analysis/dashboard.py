@@ -29,23 +29,6 @@ _OS_KEYWORDS = {
 
 
 @dataclass(frozen=True)
-class RelatedRepository:
-    """Repository outside the analyzed org whose cache should be included."""
-
-    owner: str
-    repo: str
-    label: str | None = None
-    transfer_date: str | None = None
-    billing_owner_after: str | None = None
-    note_html: str | None = None
-    include_in_cache: bool = True
-
-    @property
-    def display_name(self) -> str:
-        return self.label or self.repo
-
-
-@dataclass(frozen=True)
 class DashboardConfig:
     """Configuration for building a static dashboard."""
 
@@ -61,9 +44,7 @@ class DashboardConfig:
     title: str = "GitHub Actions Usage Analysis"
     plan_minutes: float | None = None
     days_per_month: float = DEFAULT_DAYS_PER_MONTH
-    reference_data_dir: Path | None = None
     os_multipliers: dict[str, float] = field(default_factory=lambda: DEFAULT_OS_MULTIPLIERS.copy())
-    related_repositories: list[RelatedRepository] = field(default_factory=list)
     extra_insights_html: list[str] = field(default_factory=list)
     extra_limitations_html: list[str] = field(default_factory=list)
 
@@ -107,34 +88,10 @@ def load_dashboard_config(path: Path) -> DashboardConfig:
 
     reports_dir = _resolve_path(root, analysis.get("reports_dir"), "reports")
     data_dir = _resolve_path(root, analysis.get("data_dir"), str(reports_dir))
-    reference_value = analysis.get("reference_data_dir")
-    reference_data_dir = (
-        _resolve_path(root, reference_value, "data") if reference_value else None
-    )
 
     os_multipliers = DEFAULT_OS_MULTIPLIERS.copy()
     for key, value in _section(data, "os_multipliers").items():
         os_multipliers[str(key).lower()] = float(value)
-
-    related_repositories = []
-    for item in data.get("related_repositories", []):
-        if not isinstance(item, dict):
-            raise ValueError("[[related_repositories]] entries must be tables")
-        owner = item.get("owner")
-        repo = item.get("repo")
-        if not owner or not repo:
-            raise ValueError("Each [[related_repositories]] entry needs owner and repo")
-        related_repositories.append(
-            RelatedRepository(
-                owner=str(owner),
-                repo=str(repo),
-                label=item.get("label"),
-                transfer_date=item.get("transfer_date"),
-                billing_owner_after=item.get("billing_owner_after"),
-                note_html=item.get("note_html"),
-                include_in_cache=bool(item.get("include_in_cache", True)),
-            )
-        )
 
     return DashboardConfig(
         org=str(org),
@@ -151,9 +108,7 @@ def load_dashboard_config(path: Path) -> DashboardConfig:
             float(dashboard["plan_minutes"]) if dashboard.get("plan_minutes") is not None else None
         ),
         days_per_month=float(dashboard.get("days_per_month", DEFAULT_DAYS_PER_MONTH)),
-        reference_data_dir=reference_data_dir,
         os_multipliers=os_multipliers,
-        related_repositories=related_repositories,
         extra_insights_html=[str(item) for item in dashboard.get("extra_insights_html", [])],
         extra_limitations_html=[str(item) for item in dashboard.get("extra_limitations_html", [])],
     )
@@ -212,65 +167,18 @@ def _numeric_columns(frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
-def _compute_related_repo_stats(
-    repo_name: str,
-    data_snapshot_dir: Path,
-    os_multipliers: dict[str, float],
-) -> dict[str, Any] | None:
-    wf_path = data_snapshot_dir / "actions-usage-metrics" / "workflows.csv"
-    if not wf_path.exists():
-        return None
-    try:
-        df = clean_frame(wf_path)
-    except Exception:
-        return None
-    if "Source repository" not in df.columns:
-        return None
-    rows = df[df["Source repository"] == repo_name].copy()
-    if rows.empty:
-        return None
-    rows["Multiplier"] = (
-        rows["Runtime OS"].astype(str).str.lower().map(os_multipliers).fillna(1.0)
-    )
-    rows["Billed equivalent minutes"] = rows["Total minutes"] * rows["Multiplier"]
-    os_billed = (
-        rows.groupby("Runtime OS")[["Total minutes", "Billed equivalent minutes"]]
-        .sum()
-        .to_dict("index")
-    )
-    return {
-        "raw_minutes": float(rows["Total minutes"].sum()),
-        "billed_minutes": float(rows["Billed equivalent minutes"].sum()),
-        "os_breakdown": os_billed,
-    }
-
-
-def _job_files(
-    org: str,
-    cache_dir: Path,
-    related_repositories: list[RelatedRepository],
-) -> list[tuple[Path, str, RelatedRepository | None]]:
-    files: list[tuple[Path, str, RelatedRepository | None]] = [
-        (path, path.parent.parent.name, None)
+def _job_files(org: str, cache_dir: Path) -> list[tuple[Path, str]]:
+    return [
+        (path, path.parent.parent.name)
         for path in (cache_dir / org).glob("*/jobs/*.json")
     ]
-    for related in related_repositories:
-        if not related.include_in_cache:
-            continue
-        files.extend(
-            (path, related.display_name, related)
-            for path in (cache_dir / related.owner / related.repo).glob("jobs/*.json")
-        )
-    return files
 
 
 def load_hosted_jobs_from_cache(config: DashboardConfig) -> pd.DataFrame:
     """Load completed GitHub-hosted jobs from cache for monthly charts."""
 
     rows: list[dict[str, Any]] = []
-    for jobs_file, repo, related in _job_files(
-        config.org, config.cache_dir, config.related_repositories
-    ):
+    for jobs_file, repo in _job_files(config.org, config.cache_dir):
         try:
             jobs = json.loads(jobs_file.read_text(encoding="utf-8"))
         except Exception:
@@ -299,14 +207,6 @@ def load_hosted_jobs_from_cache(config: DashboardConfig) -> pd.DataFrame:
 
             runtime_os = _labels_to_os(job.get("labels") or [])
             multiplier = config.os_multipliers.get(runtime_os, 1.0)
-            billing_org = config.org
-            if (
-                related
-                and related.transfer_date
-                and related.billing_owner_after
-                and started_at[:10] >= related.transfer_date
-            ):
-                billing_org = related.billing_owner_after
 
             rows.append(
                 {
@@ -316,7 +216,7 @@ def load_hosted_jobs_from_cache(config: DashboardConfig) -> pd.DataFrame:
                     "os": runtime_os,
                     "billed_minutes": billed,
                     "adj_billed": billed * multiplier,
-                    "billing_org": billing_org,
+                    "billing_org": config.org,
                     "run_ms": run_ms,
                     "queue_ms": queue_ms,
                     "conclusion": job.get("conclusion", ""),
@@ -803,44 +703,6 @@ def build_dashboard(config: DashboardConfig) -> dict[str, Any]:
             f"{cap_status_text}."
         )
 
-    related_stats: dict[str, dict[str, Any]] = {}
-    if config.reference_data_dir:
-        for related in config.related_repositories:
-            stats = _compute_related_repo_stats(
-                related.display_name, config.reference_data_dir, config.os_multipliers
-            )
-            if stats:
-                related_stats[related.display_name] = stats
-
-    missing_billed = sum(stats["billed_minutes"] for stats in related_stats.values())
-    if missing_billed > 0 and config.reference_data_dir and data_dir != config.reference_data_dir:
-        missing_details = []
-        for related in config.related_repositories:
-            stats = related_stats.get(related.display_name)
-            if not stats:
-                continue
-            os_parts = ", ".join(
-                f"{runtime_os} {values['Total minutes']:,.0f}x"
-                f"{config.os_multipliers.get(str(runtime_os).lower(), 1.0):g}="
-                f"{values['Billed equivalent minutes']:,.0f}"
-                for runtime_os, values in sorted(stats["os_breakdown"].items())
-            )
-            note = f"; {related.note_html}" if related.note_html else ""
-            missing_details.append(
-                f"<i>{escape(related.display_name)}</i>: {stats['raw_minutes']:,.0f} raw min "
-                f"-> <b>{stats['billed_minutes']:,.0f} billed-equivalent min</b> "
-                f"({os_parts}{note})"
-            )
-        true_billed = minutes_total_billed + missing_billed
-        insights.append(
-            "Configured related repositories are absent from "
-            f"<code>{escape(_relative(data_dir, config.root))}/</code>. "
-            f"From <code>{escape(_relative(config.reference_data_dir, config.root))}/</code>: "
-            + "; ".join(missing_details)
-            + f". Including them: total billed-equivalent usage is about "
-            f"<b>{true_billed:,.0f} minutes</b>."
-        )
-
     insights.extend(config.extra_insights_html)
 
     limitations = [
@@ -850,14 +712,6 @@ def build_dashboard(config: DashboardConfig) -> dict[str, Any]:
     if config.plan_minutes:
         limitations.append(
             "The monthly cap simulation uses annual-average demand; actual month-by-month billing may differ."
-        )
-    if config.related_repositories:
-        related_notes = []
-        for related in config.related_repositories:
-            note = related.note_html or "included only where configured cache or reference data exists"
-            related_notes.append(f"<b>{escape(related.display_name)}</b> ({note})")
-        limitations.append(
-            "Configured related repositories: " + "; ".join(related_notes) + "."
         )
     limitations.extend(config.extra_limitations_html)
 
@@ -951,15 +805,6 @@ def build_dashboard(config: DashboardConfig) -> dict[str, Any]:
         ),
         "estimated_unserved_billed_minutes_month": est_unserved_billed,
         "os_multipliers": config.os_multipliers,
-        "related_repositories": [
-            {
-                "owner": related.owner,
-                "repo": related.repo,
-                "label": related.display_name,
-                "include_in_cache": related.include_in_cache,
-            }
-            for related in config.related_repositories
-        ],
         "limitations": limitations,
         **monthly_metadata,
     }

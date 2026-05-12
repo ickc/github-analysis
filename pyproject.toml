@@ -6,7 +6,10 @@ build-backend = "hatchling.build"
 name = "github-analysis"
 version = "0.1.0"
 description = "Reusable tools for GitHub Actions metrics analysis"
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+keywords = ["github", "actions", "metrics", "analysis", "dashboard"]
 dependencies = [
     "typer>=0.9",
     "pandas>=2.0",
@@ -14,26 +17,34 @@ dependencies = [
     "PyGithub>=2.8",
     "rich>=13.0",
 ]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+]
 
 [project.scripts]
 github-analysis = "github_analysis.cli:app"
 
+[project.urls]
+Homepage = "https://github.com/ickc/github-analysis"
+Repository = "https://github.com/ickc/github-analysis"
+Issues = "https://github.com/ickc/github-analysis/issues"
+
+[dependency-groups]
+dev = [
+    "build>=1.3",
+    "twine>=6.0",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/github_analysis"]
 
-[tool.pixi.workspace]
-channels = ["conda-forge"]
-platforms = ["osx-arm64", "linux-64"]
-
-[tool.pixi.pypi-dependencies]
-github-analysis = { path = ".", editable = true }
-
-[tool.pixi.tasks]
-
-[tool.pixi.dependencies]
-python = ">=3.11"
-typer = ">=0.24.0,<0.25"
-pandas = ">=3.0.1,<4"
-plotly = ">=6,<7"
-pygithub = ">=2.8.1,<3"
-rich = ">=14.3.3,<15"
+[tool.uv]
+package = true

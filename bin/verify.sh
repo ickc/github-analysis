@@ -18,11 +18,11 @@ SUBMODULE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REF_DIR="${1:-${SUBMODULE_DIR}/data}"
 GEN_DIR="${2:-${SUBMODULE_DIR}/reports}"
 
-PIXI="pixi run --manifest-path ${SUBMODULE_DIR}/pyproject.toml"
+UV="uv --project ${SUBMODULE_DIR} run"
 
 echo "=== github-analysis: verify ==="
 echo "  reference: ${REF_DIR}"
 echo "  generated: ${GEN_DIR}"
 echo ""
 
-${PIXI} python "${SCRIPT_DIR}/compare.py" "${REF_DIR}" "${GEN_DIR}"
+${UV} github-analysis compare "${REF_DIR}" "${GEN_DIR}"
