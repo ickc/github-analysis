@@ -18,3 +18,21 @@ pixi run check
 - Keep this package organization-agnostic. Organization names, private data
   paths, billing assumptions, and one-off repository quirks should live in a
   consuming repository's config, not in this library.
+
+## Architecture (post-refactor)
+
+- Three functional stages: `fetch` (network) → `dataset` (the canonical tidy
+  IR, `ActionsDataset`) → analysis (`metrics`, `analysis`, `charts`, `report`).
+- The intermediate representation is a tidy per-job table, not GitHub's
+  aggregate CSVs. CSVs are an export (`csv_export`) for `compare` only.
+- Prefer the functional style already in place: frozen dataclasses, pure
+  functions, type hints on signatures, declarative specs over imperative loops.
+- Derived measures (billed minutes, durations, OS) are defined once, as
+  properties on the `Job`/`Run` records in `domain.py`.
+
+## Testing & docs
+
+- `uv run pytest` runs the offline suite against `tests/synthetic.py` (no token
+  or network needed). Add fixtures there rather than depending on a live org.
+- `uv run --group docs sphinx-build -b html -W docs docs/_build/html` builds the
+  docs (AutoAPI + MyST-NB tutorials); CI builds with `-W`, so keep it warning-free.

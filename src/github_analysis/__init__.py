@@ -1,9 +1,40 @@
-"""GitHub Actions metrics analysis library."""
+"""GitHub Actions metrics analysis library.
 
-from .dashboard import DashboardConfig, build_dashboard, load_dashboard_config
+A three-stage, functional pipeline:
+
+1. **fetch** (:mod:`github_analysis.fetch`) — cache raw runs/jobs from GitHub.
+2. **dataset** (:mod:`github_analysis.dataset`) — parse the cache into the
+   canonical tidy intermediate representation, :class:`ActionsDataset`.
+3. **analysis** — derive metric tables (:mod:`github_analysis.metrics`),
+   insights (:mod:`github_analysis.analysis`), and a report
+   (:mod:`github_analysis.report`) — all pure projections of the dataset.
+"""
+
+from __future__ import annotations
+
+from .analysis import UsageSummary, summarize_usage
+from .config import AnalysisConfig, DateRange, load_config, parse_period
+from .csv_export import write_reports
+from .dataset import ActionsDataset
+from .domain import Job, Run, RunnerType, RuntimeOS
+from .metrics import performance_table, usage_table
+from .report import build_dashboard, render_html
 
 __all__ = [
-    "DashboardConfig",
+    "ActionsDataset",
+    "AnalysisConfig",
+    "DateRange",
+    "Job",
+    "Run",
+    "RunnerType",
+    "RuntimeOS",
+    "UsageSummary",
     "build_dashboard",
-    "load_dashboard_config",
+    "load_config",
+    "parse_period",
+    "performance_table",
+    "render_html",
+    "summarize_usage",
+    "usage_table",
+    "write_reports",
 ]

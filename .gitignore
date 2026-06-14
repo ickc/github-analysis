@@ -8,3 +8,7 @@ build/
 .pixi/
 .env
 .ruff_cache/
+.pytest_cache/
+docs/_build/
+cache/
+reports/
