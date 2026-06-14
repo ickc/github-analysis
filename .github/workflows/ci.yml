@@ -99,3 +99,59 @@ jobs:
             docs/summary.json
             reports/
 
+  online-full-account:
+    # Full-account end-to-end test across *all* repos of an account. The built-in
+    # GITHUB_TOKEN is scoped to a single repo, so this needs a Personal Access
+    # Token with read access to the target account (classic: repo + read:org;
+    # fine-grained: Actions read across repos). Configure repository secrets
+    # GH_PAT and (optionally) GH_ACCOUNT to enable it; the job skips cleanly when
+    # GH_PAT is absent, so forks and unconfigured repos stay green.
+    runs-on: ubuntu-latest
+    env:
+      GH_PAT: ${{ secrets.GH_PAT }}
+      GH_ACCOUNT: ${{ secrets.GH_ACCOUNT || github.repository_owner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync --group dev
+      - name: Fetch the whole account and build the report
+        run: |
+          if [ -z "$GH_PAT" ]; then
+            echo "GH_PAT secret not set — skipping full-account test."
+            exit 0
+          fi
+          export GITHUB_TOKEN="$GH_PAT"
+          uv run github-analysis fetch \
+            --org "$GH_ACCOUNT" --period last-3-months --cache-dir cache
+          uv run github-analysis report \
+            --org "$GH_ACCOUNT" --cache-dir cache --output-dir reports
+          uv run github-analysis dashboard \
+            --org "$GH_ACCOUNT" --cache-dir cache \
+            --output docs/index.html --summary docs/summary.json
+          uv run python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from github_analysis.dataset import ActionsDataset
+
+          dataset = ActionsDataset.from_cache(os.environ["GH_ACCOUNT"], Path("cache"))
+          repos = {job.repo for job in dataset.jobs}
+          print(f"OK: {len(dataset.jobs)} jobs across {len(repos)} repos")
+          assert not dataset.is_empty, "no jobs fetched across the account"
+          PY
+      - name: Upload full-account dashboard
+        if: ${{ env.GH_PAT != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-full-account
+          path: |
+            docs/index.html
+            docs/summary.json
+            reports/
+

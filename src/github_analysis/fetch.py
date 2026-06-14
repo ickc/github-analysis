@@ -23,10 +23,11 @@ from typing import Any
 
 from ._api import github_api_paginate
 from .config import DateRange
+from github.GithubException import GithubException
 
 log = logging.getLogger(__name__)
 
-__all__ = ["CachePaths", "fetch_org", "fetch_repo", "list_org_repos"]
+__all__ = ["CachePaths", "fetch_org", "fetch_repo", "list_org_repos", "list_account_repos"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,9 +68,23 @@ def _read_json(path: Path) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def list_org_repos(org: str) -> list[dict[str, Any]]:
-    """All repositories in the org (public + private, all types)."""
-    return github_api_paginate(f"/orgs/{org}/repos", type="all")
+def list_account_repos(account: str) -> list[dict[str, Any]]:
+    """All repositories for an organization *or* a user account.
+
+    ``account`` may name either; the org endpoint is tried first and, on a 404
+    (i.e. it is a user, not an org), the user endpoint is used. Which repos are
+    returned depends on the token's visibility into ``account``.
+    """
+    try:
+        return github_api_paginate(f"/orgs/{account}/repos", type="all")
+    except GithubException as exc:
+        if exc.status == 404:
+            return github_api_paginate(f"/users/{account}/repos", type="all")
+        raise
+
+
+# Backwards-compatible alias.
+list_org_repos = list_account_repos
 
 
 def list_workflow_runs(
@@ -149,7 +164,7 @@ def fetch_org(
     the list of repo names successfully fetched.
     """
     if repos is None:
-        repos = [r["name"] for r in list_org_repos(org)]
+        repos = [r["name"] for r in list_account_repos(org)]
 
     fetched: list[str] = []
     for repo in repos:
