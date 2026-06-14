@@ -37,3 +37,65 @@ jobs:
         run: uv sync --group docs
       - name: Build docs
         run: uv run --group docs sphinx-build -b html -W docs docs/_build/html
+
+  online-smoke:
+    # End-to-end test against *real* GitHub Actions data, using the built-in
+    # GITHUB_TOKEN to read this repository's own runs/jobs. This exercises the
+    # network fetch path that cannot run in an offline dev sandbox.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    env:
+      ORG: ${{ github.repository_owner }}
+      REPO: ${{ github.event.repository.name }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync --group dev
+      - name: Fetch real Actions data (single repo) and build report
+        run: |
+          uv run github-analysis fetch \
+            --org "$ORG" --repo "$REPO" --period last-year --cache-dir cache
+          uv run github-analysis report \
+            --org "$ORG" --cache-dir cache --output-dir reports
+          uv run github-analysis dashboard \
+            --org "$ORG" --cache-dir cache \
+            --output docs/index.html --summary docs/summary.json
+      - name: Assert the pipeline produced non-empty results
+        run: |
+          uv run python - <<'PY'
+          import json
+          from pathlib import Path
+
+          from github_analysis.dataset import ActionsDataset
+
+          org = __import__("os").environ["ORG"]
+          dataset = ActionsDataset.from_cache(org, Path("cache"))
+          assert not dataset.is_empty, "no completed jobs were fetched"
+          print(f"OK: {len(dataset.jobs)} jobs, {len(dataset.runs)} runs")
+
+          for csv in ["repositories.csv", "workflows.csv"]:
+              path = Path("reports/actions-usage-metrics") / csv
+              assert path.exists() and path.stat().st_size > 0, f"missing/empty {path}"
+
+          summary = json.loads(Path("docs/summary.json").read_text())
+          assert summary["raw_total_minutes_period"] > 0, "zero raw minutes"
+          print("summary:", summary["raw_total_minutes_period"], "raw minutes")
+          PY
+      - name: Upload generated dashboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard
+          path: |
+            docs/index.html
+            docs/summary.json
+            reports/
+
