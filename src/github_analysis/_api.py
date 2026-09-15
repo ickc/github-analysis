@@ -1,20 +1,31 @@
-"""Low-level wrapper around the GitHub REST API using PyGithub."""
+"""Thin, typed wrapper around the GitHub REST API (via PyGithub).
+
+This is the only module that talks to the network. It deliberately exposes just
+two primitives — a single GET and a paginated GET — so that the higher-level
+:mod:`github_analysis.fetch` module reads as a description of *which* endpoints
+make up the raw dataset, not as HTTP plumbing.
+"""
 
 from __future__ import annotations
 
-from functools import lru_cache
+import os
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from github import Auth, Github
 from github.GithubException import GithubException, RateLimitExceededException
 
+__all__ = ["github_api", "github_api_paginate", "resolve_token"]
+
 _PER_PAGE = 100
 _HOSTS_PATH = Path.home() / ".config" / "gh" / "hosts.yml"
+_RATE_LIMIT_BACKOFF_SECONDS = 60
 
 
 def _token_from_gh_config() -> str | None:
+    """Read an oauth token from the ``gh`` CLI's ``hosts.yml`` for github.com."""
     if not _HOSTS_PATH.exists():
         return None
 
@@ -31,9 +42,12 @@ def _token_from_gh_config() -> str | None:
     return None
 
 
-def _resolve_token() -> str:
-    import os
+def resolve_token() -> str:
+    """Resolve a GitHub token from the environment or the ``gh`` CLI config.
 
+    Raises:
+        RuntimeError: if no token can be found.
+    """
     for env_var in ("GITHUB_TOKEN", "GH_TOKEN"):
         token = os.environ.get(env_var)
         if token:
@@ -44,14 +58,14 @@ def _resolve_token() -> str:
         return token
 
     raise RuntimeError(
-        "No GitHub token found. Set GITHUB_TOKEN or GH_TOKEN, or login with the gh CLI "
-        "so ~/.config/gh/hosts.yml contains an oauth_token."
+        "No GitHub token found. Set GITHUB_TOKEN or GH_TOKEN, or login with the "
+        "gh CLI so ~/.config/gh/hosts.yml contains an oauth_token."
     )
 
 
 @lru_cache(maxsize=1)
 def _client() -> Github:
-    return Github(auth=Auth.Token(_resolve_token()), per_page=_PER_PAGE)
+    return Github(auth=Auth.Token(resolve_token()), per_page=_PER_PAGE)
 
 
 def _request(
@@ -60,7 +74,7 @@ def _request(
     params: dict[str, Any] | None = None,
     retry_on_rate_limit: bool = True,
 ) -> Any:
-    requester = _client()._Github__requester
+    requester = _client()._Github__requester  # noqa: SLF001 - PyGithub internal
     path = endpoint if endpoint.startswith("/") else f"/{endpoint}"
 
     for attempt in range(2):
@@ -69,20 +83,19 @@ def _request(
             return payload
         except RateLimitExceededException:
             if attempt == 0 and retry_on_rate_limit:
-                time.sleep(60)
+                time.sleep(_RATE_LIMIT_BACKOFF_SECONDS)
                 continue
             raise
         except GithubException as exc:
             if attempt == 0 and retry_on_rate_limit and exc.status == 403:
-                time.sleep(60)
+                time.sleep(_RATE_LIMIT_BACKOFF_SECONDS)
                 continue
             raise
-
     return None
 
 
 def github_api(endpoint: str, **params: str) -> Any:
-    """Single GET request to the GitHub API."""
+    """Perform a single GET request against the GitHub API."""
     return _request(endpoint, params=params)
 
 
@@ -92,7 +105,13 @@ def github_api_paginate(
     retry_on_rate_limit: bool = True,
     **params: str,
 ) -> list[Any]:
-    """Paginated GET requests returning all items."""
+    """Perform paginated GET requests and return all collected items.
+
+    Args:
+        endpoint: API path, e.g. ``/orgs/{org}/repos``.
+        response_key: for endpoints that wrap the list in an object (e.g.
+            ``workflow_runs``), the key to read; ``None`` for bare-list endpoints.
+    """
     items: list[Any] = []
     page = 1
 
@@ -113,8 +132,8 @@ def github_api_paginate(
             batch = payload.get(response_key, [])
             if not isinstance(batch, list):
                 raise TypeError(
-                    f"Expected list payload under response_key={response_key!r} "
-                    f"for {endpoint}, got {type(batch)!r}"
+                    f"Expected list under response_key={response_key!r} for "
+                    f"{endpoint}, got {type(batch)!r}"
                 )
 
         items.extend(batch)

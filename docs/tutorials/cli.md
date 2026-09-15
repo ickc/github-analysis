@@ -1,0 +1,114 @@
+# Tutorial: the command line, start to finish
+
+This walkthrough takes you from nothing to a published HTML dashboard using only
+the `github-analysis` CLI. It mirrors the three pipeline stages: **fetch →
+report → dashboard** (with `recreate` running all three at once).
+
+## 1. Install and authenticate
+
+```bash
+uv tool install github-analysis
+github-analysis --help
+```
+
+The CLI needs a GitHub token that can read Actions metadata for the target
+account. Provide one of:
+
+```bash
+export GITHUB_TOKEN=...        # or GH_TOKEN
+# or: gh auth login            # token is read from ~/.config/gh/hosts.yml
+```
+
+## 2. Create a project and config
+
+```bash
+mkdir github-actions-report && cd github-actions-report
+```
+
+Create `analysis.toml` (works for an organization *or* a user account — set
+`org` to either):
+
+```toml
+[analysis]
+org = "ickc"
+period = "last-year"
+cache_dir = "cache"
+reports_dir = "reports"
+data_dir = "reports"
+output_html = "docs/index.html"
+summary_json = "docs/summary.json"
+
+[dashboard]
+title = "GitHub Actions Usage Analysis"
+period_label = "last year"
+# plan_minutes = 3000          # uncomment if you have a monthly minutes cap
+
+[os_multipliers]
+linux = 1
+windows = 2
+macos = 10
+```
+
+`period` accepts `last-year`, `last-6-months`, `last-3-months`, `last-month`, or
+an explicit `YYYY-MM-DD..YYYY-MM-DD` range.
+
+## 3. Fetch raw data (stage 1)
+
+```bash
+github-analysis fetch --org ickc --period last-year --cache-dir cache
+```
+
+This caches verbatim API responses under `cache/ickc/<repo>/`. Re-running is
+cheap — cached runs and jobs are reused unless you pass `--force`.
+
+## 4. Export metric CSVs (stage 2/3)
+
+```bash
+github-analysis report --org ickc --cache-dir cache --output-dir reports
+```
+
+Produces GitHub-compatible CSVs::
+
+```text
+reports/actions-usage-metrics/{workflows,jobs,repositories,runtime-os,runner-type}.csv
+reports/actions-performance-metrics/{workflows,jobs,repositories,runtime-os,runner-type}.csv
+```
+
+Peek at a table without writing files:
+
+```bash
+github-analysis show usage repositories --org ickc --cache-dir cache --top 10
+```
+
+## 5. Build the dashboard (stage 3)
+
+```bash
+github-analysis dashboard --config analysis.toml
+```
+
+Writes the static dashboard to `docs/index.html` and machine-readable metadata
+to `docs/summary.json`.
+
+## 6. Or do it all at once
+
+```bash
+github-analysis recreate --config analysis.toml
+```
+
+`recreate` runs fetch → report → dashboard from a single config. Useful flags:
+
+- `--skip-fetch` — reuse the cache and only regenerate outputs.
+- `--skip-dashboard` — produce CSVs only.
+- `--force` — re-fetch even when cached.
+
+## 7. (Optional) verify against a GitHub export
+
+If you have a reference snapshot exported from GitHub's UI, diff it against your
+generated CSVs:
+
+```bash
+github-analysis compare reference-data reports
+```
+
+The comparison distinguishes genuine structural mismatches from expected
+"snapshot drift" (newer runs, or repos no longer visible to your token).

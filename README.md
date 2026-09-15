@@ -1,17 +1,36 @@
 # github-analysis
 
-Reusable tools for analyzing GitHub Actions usage and performance across any
-GitHub organization.
+Reusable, auditable tools for analyzing GitHub Actions usage and performance
+across any GitHub organization **or user account**.
 
-The package fetches workflow run and job data from the GitHub REST API, caches
-the raw JSON locally, computes CSV tables similar to GitHub's Actions metrics
-exports, and can build a static HTML dashboard from those CSVs. It is
-organization-agnostic: organization names, output paths, and billing assumptions
-belong in your config file.
+The package fetches workflow-run and job data from the GitHub REST API, caches
+the raw JSON locally, parses it into a single typed **intermediate
+representation**, and derives every report — GitHub-style metric tables,
+headline KPIs, and a static HTML dashboard — as a pure projection of that
+representation. It is organization-agnostic: org/user names, output paths, and
+billing assumptions live in your config file.
+
+## Architecture
+
+A three-stage, functional pipeline (see the [design docs](docs/design.md) for
+the full rationale):
+
+| Stage | Module | Output |
+| ----- | ------ | ------ |
+| 1. Fetch | `github_analysis.fetch` | cached raw JSON (verbatim API responses) |
+| 2. Dataset (the IR) | `github_analysis.dataset` | `ActionsDataset` — a tidy per-job / per-run table |
+| 3a. Metric tables | `github_analysis.metrics` | usage / performance DataFrames |
+| 3b. Insights | `github_analysis.analysis` | `UsageSummary`, monthly time-series |
+| 3c. Report | `github_analysis.report` | HTML dashboard + JSON summary |
+
+The canonical intermediate representation is a **tidy per-job table** (one row
+per job, with all derived measures and dimensions), not GitHub's aggregate CSV
+exports. Aggregate exports drop per-job timestamps, so they cannot support
+time-series views; the tidy table can, and every other view derives from it.
+GitHub-compatible CSVs are still produced as an *export*
+(`github_analysis.csv_export`) for diffing against GitHub's own metrics.
 
 ## Install
-
-After the package is published to PyPI:
 
 ```bash
 uv tool install github-analysis
@@ -21,160 +40,91 @@ github-analysis --help
 For local development from a checkout:
 
 ```bash
-uv sync
+uv sync --group dev
 uv run github-analysis --help
 ```
 
-The repository also includes a `pixi` environment. It mirrors the runtime
-dependencies in `[tool.pixi.dependencies]` and installs this package as an
-editable local PyPI dependency, so pixi users get dependencies from conda-forge:
+A conda-forge `pixi` environment is also provided:
 
 ```bash
 pixi run help
 pixi run check
+pixi run test
 ```
 
 ## Authentication
 
 The CLI needs a GitHub token that can read Actions metadata for the target
-organization. Use either:
+account. Use either:
 
 ```bash
-export GITHUB_TOKEN=...
+export GITHUB_TOKEN=...      # or GH_TOKEN
 ```
 
-or login with the GitHub CLI:
+or login with the GitHub CLI (`gh auth login`); if `GITHUB_TOKEN`/`GH_TOKEN` are
+unset, the token is read from `~/.config/gh/hosts.yml`.
+
+## Quick start
 
 ```bash
-gh auth login
-```
-
-If `GITHUB_TOKEN` and `GH_TOKEN` are unset, `github-analysis` reads the token
-from `~/.config/gh/hosts.yml`.
-
-## Tutorial
-
-Create a project directory for your analysis:
-
-```bash
-mkdir github-actions-report
-cd github-actions-report
-mkdir -p docs
-```
-
-Create `analysis.toml`:
-
-```toml
-[analysis]
-org = "example-org"
-period = "last-year"
-cache_dir = "cache"
-reports_dir = "reports"
-data_dir = "reports"
-output_html = "docs/index.html"
-summary_json = "docs/summary.json"
-
-[dashboard]
-title = "GitHub Actions Usage Analysis"
-period_label = "last year"
-# Optional monthly included-minutes cap for the dashboard simulation.
-# plan_minutes = 3000
-
-[os_multipliers]
-linux = 1
-windows = 2
-macos = 10
-```
-
-Fetch and cache raw GitHub API data:
-
-```bash
-github-analysis fetch \
-  --org example-org \
-  --period last-year \
-  --cache-dir cache
-```
-
-Generate CSV reports from the cache:
-
-```bash
-github-analysis report \
-  --org example-org \
-  --cache-dir cache \
-  --output-dir reports
-```
-
-Build the static dashboard:
-
-```bash
-github-analysis dashboard --config analysis.toml
-```
-
-The dashboard is written to `docs/index.html`, and machine-readable summary
-metadata is written to `docs/summary.json`.
-
-You can run the same workflow in one command:
-
-```bash
+mkdir github-actions-report && cd github-actions-report
+$EDITOR analysis.toml          # see examples/analysis.toml
 github-analysis recreate --config analysis.toml
 ```
 
-## Other Commands
+`recreate` runs fetch → CSV export → dashboard end to end. The dashboard is
+written to `docs/index.html` and machine-readable metadata to
+`docs/summary.json`. See the [CLI tutorial](docs/tutorials/cli.md) for the
+step-by-step version and the [Python tutorial](docs/tutorials/python_analysis.py)
+for the programmatic analysis API.
 
-Show a table in the terminal:
-
-```bash
-github-analysis show usage workflows --org example-org --cache-dir cache
-```
-
-Compare generated CSV reports against a reference snapshot:
+## Other commands
 
 ```bash
+# Fetch, then export CSVs, separately:
+github-analysis fetch  --org example-org --period last-year --cache-dir cache
+github-analysis report --org example-org --cache-dir cache --output-dir reports
+
+# Print a table to the terminal:
+github-analysis show usage repositories --org example-org --cache-dir cache
+
+# Diff generated CSVs against a reference snapshot exported from GitHub:
 github-analysis compare reference-data reports
 ```
 
-## Config Reference
+## Config reference
 
-See [examples/analysis.toml](examples/analysis.toml) for a minimal complete
-configuration.
+See [examples/analysis.toml](examples/analysis.toml). `period` accepts
+`last-year`, `last-6-months`, `last-3-months`, `last-month`, or
+`YYYY-MM-DD..YYYY-MM-DD`.
 
-`[analysis]`:
+`[analysis]`: `org`, `period`, `cache_dir`, `reports_dir`, `data_dir`,
+`output_html`, `summary_json`.
 
-- `org`: GitHub organization name.
-- `period`: one of `last-year`, `last-6-months`, `last-3-months`,
-  `last-month`, or `YYYY-MM-DD..YYYY-MM-DD`.
-- `cache_dir`: directory for cached raw JSON.
-- `reports_dir`: directory where CSV reports are written by `recreate`.
-- `data_dir`: directory read by `dashboard`; usually the same as `reports_dir`.
-- `output_html`: static dashboard output path.
-- `summary_json`: summary metadata output path.
+`[dashboard]`: `title`, `period_label`, `plan_minutes` (optional monthly cap),
+`extra_insights_html`, `extra_limitations_html`.
 
-`[dashboard]`:
-
-- `title`: dashboard title.
-- `period_label`: label used in chart headings.
-- `plan_minutes`: optional monthly included-minutes cap for cap simulation.
-- `extra_insights_html`: optional list of HTML snippets appended to insights.
-- `extra_limitations_html`: optional list of HTML snippets appended to limitations.
-
-`[os_multipliers]`:
-
-- Runtime OS billing multipliers used for billed-equivalent minute estimates.
+`[os_multipliers]`: runtime OS billing multipliers for billed-equivalent
+estimates (defaults: linux 1, windows 2, macos 10).
 
 ## Development
 
-Use `uv` for PyPI-oriented packaging and release checks:
-
 ```bash
-uv sync
-uv build
+uv sync --group dev
+uv run pytest                  # offline test suite (synthetic fixtures)
+uv build                       # build the wheel/sdist
 ```
 
-Use `pixi` when you want a conda-forge solved development environment:
+The test suite runs fully offline against a synthetic cache (`tests/synthetic.py`),
+so no token or network is required.
+
+## Documentation
 
 ```bash
-pixi run check
-pixi run help
+uv sync --group docs
+uv run --group docs sphinx-build -b html docs docs/_build/html
 ```
 
-The package exposes the `github-analysis` console script via `pyproject.toml`.
+The site uses Sphinx with AutoAPI (API reference from source), a design page,
+and CLI + Python tutorials (the Python tutorial is an executable jupytext
+notebook rendered via MyST-NB).
