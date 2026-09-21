@@ -106,6 +106,8 @@ jobs:
     # fine-grained: Actions read across repos). Configure repository secrets
     # GH_PAT and (optionally) GH_ACCOUNT to enable it; the job skips cleanly when
     # GH_PAT is absent, so forks and unconfigured repos stay green.
+    # Its output is deliberately not uploaded: this repository is public, so an
+    # artifact would expose the account's private repository names and usage.
     runs-on: ubuntu-latest
     env:
       GH_PAT: ${{ secrets.GH_PAT }}
@@ -145,13 +147,3 @@ jobs:
           print(f"OK: {len(dataset.jobs)} jobs across {len(repos)} repos")
           assert not dataset.is_empty, "no jobs fetched across the account"
           PY
-      - name: Upload full-account dashboard
-        if: ${{ env.GH_PAT != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: dashboard-full-account
-          path: |
-            docs/index.html
-            docs/summary.json
-            reports/
-
