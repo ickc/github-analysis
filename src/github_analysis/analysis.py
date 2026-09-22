@@ -21,6 +21,8 @@ from .metrics import usage_table
 __all__ = [
     "UsageSummary",
     "billed_equivalent_by_os",
+    "billing_monthly_usage",
+    "monthly_comparison",
     "monthly_usage",
     "summarize_usage",
 ]
@@ -66,6 +68,60 @@ def monthly_usage(
         frame["runtime_os"], multipliers
     )
     return frame
+
+
+def billing_monthly_usage(
+    billing_frame: pd.DataFrame, multipliers: Mapping[str, float]
+) -> pd.DataFrame:
+    """Billing-report Actions minutes augmented with ``adj_billed``.
+
+    ``billing_frame`` is :meth:`BillingUsage.actions_minutes_frame
+    <github_analysis.billing.BillingUsage.actions_minutes_frame>`. The result
+    has the same ``month``/``runtime_os``/``adj_billed`` columns as
+    :func:`monthly_usage`, so the same monthly charts apply to it.
+    """
+    frame = billing_frame.copy()
+    frame["adj_billed"] = frame["minutes"].astype(float) * _multiplier_series(
+        frame["runtime_os"], multipliers
+    )
+    return frame
+
+
+def _monthly_all_and_private(
+    frame: pd.DataFrame, column: str
+) -> tuple[pd.Series, pd.Series]:
+    """Monthly sums of ``column`` over all repos and over non-public repos."""
+    if frame.empty:
+        empty = pd.Series(dtype=float)
+        return empty, empty
+    all_repos = frame.groupby("month")[column].sum()
+    private = frame[frame["visibility"] != "public"].groupby("month")[column].sum()
+    return all_repos, private.reindex(all_repos.index, fill_value=0.0)
+
+
+def monthly_comparison(
+    estimated: pd.DataFrame, billed: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    """Monthly billed-equivalent minutes: all repos vs private-only.
+
+    ``estimated`` is :func:`monthly_usage`; ``billed`` (optional) is
+    :func:`billing_monthly_usage`. Private-only drops public repos and keeps
+    private, internal and unknown ones. Billing columns are present only when
+    ``billed`` is given; months missing from one source are ``NaN``.
+    """
+    est_all, est_private = _monthly_all_and_private(estimated, "adj_billed")
+    columns = {"Estimated, all repos": est_all, "Estimated, private only": est_private}
+    if billed is not None:
+        billed_all, billed_private = _monthly_all_and_private(billed, "adj_billed")
+        net_all, _ = _monthly_all_and_private(billed, "net_amount")
+        columns |= {
+            "Billed, all repos": billed_all,
+            "Billed, private only": billed_private,
+            "Actions net charge (USD)": net_all,
+        }
+    table = pd.DataFrame(columns).sort_index()
+    table.index.name = "Month"
+    return table.reset_index()
 
 
 @dataclass(frozen=True, slots=True)

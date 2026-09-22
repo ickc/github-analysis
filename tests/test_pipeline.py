@@ -15,7 +15,7 @@ from github_analysis.dataset import ActionsDataset
 from github_analysis.metrics import performance_table, usage_table
 from github_analysis.report import build_dashboard
 
-from .synthetic import ORG, write_synthetic_cache
+from .synthetic import ORG, write_synthetic_billing, write_synthetic_cache
 
 MULTIPLIERS = {"linux": 1.0, "windows": 2.0, "macos": 10.0}
 
@@ -168,6 +168,65 @@ def test_build_dashboard_writes_html_and_summary(dataset: ActionsDataset, tmp_pa
     saved = json.loads(config.summary_json.read_text())
     assert saved["org"] == ORG
     assert "2024-01" in saved["monthly_billed_equivalent_minutes"]
+
+
+def test_dashboard_private_scope_toggle(tmp_path: Path):
+    config = _config(tmp_path, plan_minutes=5.0)
+    write_synthetic_cache(config.cache_dir)
+    metadata = build_dashboard(config)
+
+    html = config.output_html.read_text()
+    assert "Private repositories only" in html  # the plotly scope toggle
+    assert "billing usage report was not available" in html
+    private = metadata["private_only"]
+    # Only "api" is private: linux 10 + windows 3x2 + macos 5x10.
+    assert private["raw_total_minutes_period"] == 18
+    assert private["billed_equivalent_minutes_period"] == 66
+    assert private["monthly_billed_equivalent_minutes"] == {"2024-01": 10.0, "2024-02": 56.0}
+    assert metadata["billing_report"] is None
+
+
+def test_dashboard_without_visibility_or_billing(tmp_path: Path):
+    config = _config(tmp_path, plan_minutes=5.0)
+    write_synthetic_cache(config.cache_dir, repo_metadata=False)
+    metadata = build_dashboard(config)
+
+    html = config.output_html.read_text()
+    assert "Private repositories only" not in html
+    assert "Repository visibility was not cached" in html
+    assert metadata["private_only"] is None
+    assert metadata["billing_report"] is None
+    assert metadata["billed_equivalent_minutes_period"] == 75
+
+
+def test_dashboard_with_billing_report(tmp_path: Path):
+    config = _config(tmp_path, plan_minutes=5.0, period="2024-01-01..2024-03-01")
+    write_synthetic_cache(config.cache_dir)
+    write_synthetic_billing(config.cache_dir)
+    metadata = build_dashboard(config)
+
+    html = config.output_html.read_text()
+    assert "GitHub billing report" in html
+    billing = metadata["billing_report"]
+    assert billing["months"] == ["2024-01", "2024-02"]
+    assert billing["missing_months"] == []
+    # All: linux 11+2+7 + windows 3x2 + macos 5x10 = 76; private (api): 11 + 6 + 50.
+    assert billing["billed_equivalent_minutes_period"] == 76
+    assert billing["private_billed_equivalent_minutes_period"] == 67
+    assert billing["private_monthly_billed_equivalent_minutes"] == {"2024-01": 11.0, "2024-02": 56.0}
+    assert billing["actions_net_charge_usd"] == 0.4
+
+
+def test_dashboard_with_billing_but_no_visibility(tmp_path: Path):
+    config = _config(tmp_path, period="2024-01-01..2024-04-01")
+    write_synthetic_cache(config.cache_dir, repo_metadata=False)
+    write_synthetic_billing(config.cache_dir)
+    metadata = build_dashboard(config)
+
+    billing = metadata["billing_report"]
+    assert billing["missing_months"] == ["2024-03"]
+    assert "private_billed_equivalent_minutes_period" not in billing
+    assert "Private repositories only" not in config.output_html.read_text()
 
 
 def test_empty_dataset_is_safe():

@@ -29,6 +29,8 @@ __all__ = [
     "monthly_runs",
     "last_success_day",
     "monthly_repository_explorer",
+    "scope_toggle",
+    "SCOPE_LABELS",
 ]
 
 _OS_ORDER = ("linux", "windows", "macos", "unknown")
@@ -38,6 +40,71 @@ _OS_COLORS = {
     "macos": "#F58518",
     "unknown": "#BAB0AC",
 }
+
+
+SCOPE_LABELS = ("All repositories", "Private repositories only")
+
+
+def _scoped_title(title: str, label: str) -> str:
+    return f"{title} · {label.lower()}" if title else ""
+
+
+def scope_toggle(
+    all_fig: go.Figure,
+    private_fig: go.Figure,
+    labels: Sequence[str] = SCOPE_LABELS,
+) -> go.Figure:
+    """Combine two versions of a chart into one with a two-button scope toggle.
+
+    ``all_fig`` and ``private_fig`` are the same chart built from all repos and
+    from private repos only. The result starts on ``all_fig`` and the buttons
+    swap which traces are visible, along with the title. The layout (axes,
+    shapes such as a plan-cap line) is taken from ``all_fig``; the y-axis
+    autoscales on each switch.
+    """
+    # Traces a builder hid itself stay hidden in both scopes.
+    shown = [
+        (trace.visible is not False, in_all)
+        for in_all, source in ((True, all_fig), (False, private_fig))
+        for trace in source.data
+    ]
+    fig = go.Figure(layout=all_fig.layout)
+    for trace in all_fig.data:
+        fig.add_trace(trace)
+    for trace in private_fig.data:
+        fig.add_trace(trace)
+        fig.data[-1].visible = False
+    titles = (all_fig.layout.title.text or "", private_fig.layout.title.text or "")
+
+    def button(label: str, show_all: bool, title: str) -> dict:
+        visible = [base and in_all == show_all for base, in_all in shown]
+        relayout = {
+            "title.text": _scoped_title(title, label),
+            "xaxis.autorange": True,
+            "yaxis.autorange": True,
+        }
+        return {"label": label, "method": "update", "args": [{"visible": visible}, relayout]}
+
+    fig.update_layout(
+        title_text=_scoped_title(titles[0], labels[0]) or None,
+        updatemenus=[
+            {
+                "type": "buttons",
+                "direction": "right",
+                "buttons": [
+                    button(labels[0], True, titles[0]),
+                    button(labels[1], False, titles[1]),
+                ],
+                "showactive": True,
+                "active": 0,
+                "x": 0.0,
+                "xanchor": "left",
+                "y": 1.02,
+                "yanchor": "bottom",
+            }
+        ],
+    )
+    return fig
 
 
 def _month_length(year_month: str) -> int:
@@ -190,8 +257,14 @@ def monthly_billed_by_os(
     monthly: pd.DataFrame,
     multipliers: Mapping[str, float],
     plan_minutes: float | None,
+    title: str = "Monthly billed-equivalent minutes by OS",
 ) -> go.Figure:
-    """Stacked monthly billed-equivalent minutes, split by OS."""
+    """Stacked monthly billed-equivalent minutes, split by OS.
+
+    ``monthly`` needs ``month``, ``runtime_os`` and ``adj_billed`` columns, as
+    produced by :func:`~github_analysis.analysis.monthly_usage` or
+    :func:`~github_analysis.analysis.billing_monthly_usage`.
+    """
     by_month_os = monthly.groupby(["month", "runtime_os"])["adj_billed"].sum().reset_index()
     fig = go.Figure()
     for runtime_os in _OS_ORDER:
@@ -217,7 +290,7 @@ def monthly_billed_by_os(
         )
     fig.update_layout(
         barmode="stack",
-        title="Monthly billed-equivalent minutes by OS",
+        title=title,
         xaxis_title="Month",
         yaxis_title="Billed-equivalent minutes",
         legend_title="Runtime OS",
