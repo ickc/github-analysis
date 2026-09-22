@@ -5,6 +5,7 @@ immutable config or dataset, and delegates to the library. The three pipeline
 stages map onto commands directly:
 
     fetch      stage 1 — cache raw runs/jobs from the GitHub API
+    import-billing  stage 1 — cache a billing usage report CSV from the web UI
     report     stage 2/3 — export GitHub-compatible metric CSVs
     dashboard  stage 3 — build the static HTML report + JSON summary
     recreate   run the whole pipeline from one config file
@@ -24,6 +25,7 @@ from rich.table import Table
 from .compare import main as compare_reports
 from .config import AnalysisConfig, DateRange, load_config, parse_period
 from .csv_export import Metric, write_reports
+from .billing import import_usage_csv
 from .dataset import ActionsDataset
 from .fetch import fetch_billing_usage, fetch_org, fetch_repo
 from .metrics import PERFORMANCE_TABLES, USAGE_TABLES
@@ -78,11 +80,33 @@ def _fetch_billing(org: str, cache_dir: Path, date_range: DateRange, *, force: b
     months = fetch_billing_usage(org, cache_dir, date_range, force=force)
     if months is None:
         console.print(
-            "[yellow]Billing usage report unavailable[/yellow] (needs an org owner or "
-            "billing manager); reports will use estimated minutes only."
+            "[yellow]Billing usage report unavailable[/yellow] (the API appears to "
+            "need an org owner); billing managers can use 'import-billing' instead."
         )
     else:
         console.print(f"[green]Done[/green]: billing usage for {len(months)} months")
+
+
+@app.command("import-billing")
+def import_billing(
+    csv_file: Path = typer.Argument(..., exists=True, dir_okay=False, help="Usage report CSV."),
+    org: str = typer.Option(..., help="GitHub organization (or user) name."),
+    cache_dir: Path = typer.Option(Path("cache"), help="Directory to store cached JSON."),
+) -> None:
+    """Cache a billing usage report CSV downloaded from GitHub's billing pages.
+
+    Use this when the billing API is unavailable, as it is to billing managers
+    who are not organisation owners: they can still download the summarized
+    usage report, which covers up to a year. The dashboard then treats it like fetched billing data.
+    """
+    months = import_usage_csv(csv_file, org, cache_dir)
+    if not months:
+        console.print(f"[yellow]No rows for {org} in {csv_file}.[/yellow]")
+        raise typer.Exit(1)
+    console.print(
+        f"[green]Imported[/green] billing usage for {len(months)} months "
+        f"({months[0]} to {months[-1]})"
+    )
 
 
 # ---------------------------------------------------------------------------

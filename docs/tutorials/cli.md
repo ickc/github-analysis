@@ -63,9 +63,17 @@ repository's visibility in `repo.json`. Re-running is cheap — cached runs and
 jobs are reused unless you pass `--force`.
 
 Add `--billing` to also cache GitHub's billing usage report under
-`cache/_billing/ickc/`. It needs an organisation owner or billing manager (or
-the `user` token scope for a user account); without that access `fetch` prints
-a warning, skips it, and the dashboard falls back to estimated minutes.
+`cache/_billing/ickc/`. The API appears to need an organisation owner (or the
+`user` token scope for a user account); without that access `fetch` prints a
+warning, skips it, and the dashboard falls back to estimated minutes.
+
+Billing managers can download the usage report CSV from the organisation's
+billing usage page instead (the summarized report covers up to a year) and
+import it into the same cache:
+
+```bash
+github-analysis import-billing usage-report.csv --org ickc --cache-dir cache
+```
 
 ## 4. Export metric CSVs (stage 2/3)
 

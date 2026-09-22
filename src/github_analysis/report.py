@@ -247,9 +247,9 @@ def _limitations(
         )
     if billing is None:
         items.append(
-            "GitHub's billing usage report was not available (it needs an "
-            "organisation owner or billing manager), so all minutes are estimated "
-            "from job durations."
+            "GitHub's billing usage report was not available (fetch it as an "
+            "organisation owner, or import the usage report CSV), so all minutes "
+            "are estimated from job durations."
         )
     elif billing.missing_months:
         items.append(

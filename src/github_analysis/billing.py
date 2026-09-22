@@ -6,9 +6,14 @@ from job timestamps. When the account's billing usage report has been cached
 provides the minutes GitHub actually billed, per day, repository and SKU.
 
 The report is optional. :meth:`BillingUsage.from_cache` returns ``None`` when
-nothing was cached (typically because the token lacks the organisation owner or
-billing manager role), and every consumer must treat that as "use the
-estimates only".
+nothing was cached, and every consumer must treat that as "use the estimates
+only". There are two ways to cache it:
+
+* :func:`github_analysis.fetch.fetch_billing_usage`, via the REST API, which
+  appears to admit organisation owners only (billing managers get a 404); or
+* :func:`import_usage_csv`, from the usage report CSV that billing managers can
+  download from the organisation's billing pages (the *summarized* report
+  covers up to a year and has the per-repository breakdown needed here).
 
 The report does not record repository visibility, so the private-only view is
 derived from the dataset's cached repository metadata, as for the estimates.
@@ -16,6 +21,7 @@ derived from the dataset's cached repository metadata, as for the estimates.
 
 from __future__ import annotations
 
+import csv
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -29,7 +35,7 @@ from .config import DateRange
 from .domain import BillingUsageItem, Visibility
 from .fetch import CachePaths, billing_months
 
-__all__ = ["BillingUsage", "BILLING_COLUMNS"]
+__all__ = ["BillingUsage", "BILLING_COLUMNS", "CSV_TO_API_FIELDS", "import_usage_csv"]
 
 BILLING_COLUMNS: tuple[str, ...] = (
     "date",
@@ -129,3 +135,59 @@ def _load_months(files: Iterable[Path]) -> Iterable[tuple[str, list[BillingUsage
             continue
         items = [BillingUsageItem.from_payload(p) for p in payloads if isinstance(p, dict)]
         yield path.stem, [item for item in items if item is not None]
+
+
+# Usage-report CSV columns and the REST API ``usageItems`` fields they map to.
+CSV_TO_API_FIELDS: Mapping[str, str] = {
+    "date": "date",
+    "product": "product",
+    "sku": "sku",
+    "quantity": "quantity",
+    "unit_type": "unitType",
+    "applied_cost_per_quantity": "pricePerUnit",
+    "gross_amount": "grossAmount",
+    "discount_amount": "discountAmount",
+    "net_amount": "netAmount",
+    "organization": "organizationName",
+    "repository": "repositoryName",
+}
+
+
+def _csv_row_to_item(row: Mapping[str, str]) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        api: row[column] for column, api in CSV_TO_API_FIELDS.items() if column in row
+    }
+    for key in ("quantity", "pricePerUnit", "grossAmount", "discountAmount", "netAmount"):
+        if key in item:
+            try:
+                item[key] = float(item[key])
+            except ValueError:
+                item[key] = 0.0
+    return item
+
+
+def import_usage_csv(csv_path: Path, org: str, cache_dir: Path) -> list[str]:
+    """Cache a billing usage report CSV as if it had been fetched from the API.
+
+    Rows are converted to the API's ``usageItems`` shape and written one file
+    per month under ``{cache_dir}/_billing/{org}/``, replacing any cached
+    month the CSV covers. Rows for other organisations are skipped. A month
+    the CSV only partly covers is cached as partial, so export whole months.
+
+    Returns the months written.
+    """
+    by_month: dict[str, list[dict[str, Any]]] = {}
+    # ``utf-8-sig`` drops the byte-order mark GitHub puts before the header.
+    with csv_path.open(newline="", encoding="utf-8-sig") as handle:
+        for row in csv.DictReader(handle):
+            if row.get("organization", org).lower() != org.lower():
+                continue
+            month = (row.get("date") or "")[:7]
+            if len(month) == 7:
+                by_month.setdefault(month, []).append(_csv_row_to_item(row))
+
+    paths = CachePaths(cache_dir, org)
+    paths.billing_dir.mkdir(parents=True, exist_ok=True)
+    for month, items in by_month.items():
+        paths.billing_file(month).write_text(json.dumps(items), encoding="utf-8")
+    return sorted(by_month)

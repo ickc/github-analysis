@@ -113,7 +113,9 @@ Two inputs enrich the dataset but are never required:
   {py:func}`~github_analysis.charts.scope_toggle`.
 - **The billing usage report** ({py:class}`~github_analysis.billing.BillingUsage`)
   holds the minutes GitHub actually billed. It sits beside the dataset rather
-  than inside it, since it is per day and per SKU rather than per job.
+  than inside it, since it is per day and per SKU rather than per job. It is
+  fetched from the REST API (organisation owners) or imported from the usage
+  report CSV that billing managers can download; both write the same cache.
 
 Both degrade to "absent": missing visibility is `unknown` (counted as
 quota-using, so private-only never understates), and a missing billing report is

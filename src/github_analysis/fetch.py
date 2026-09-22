@@ -17,10 +17,12 @@ Cache layout::
 :data:`REPO_METADATA_FIELDS`), not the full payload. It records the
 repository's visibility *at fetch time* and is rewritten on every org fetch.
 
-The billing usage report is optional: it needs an organisation owner or billing
-manager (or, for a user account, the ``user`` token scope). Without that access
-:func:`fetch_billing_usage` logs a warning and caches nothing, and the analysis
-falls back to minutes estimated from job timings.
+The billing usage report is optional: the API appears to need an organisation
+owner (billing managers get a 404), or, for a user account, the ``user`` token
+scope. Without that access :func:`fetch_billing_usage` logs a warning and caches
+nothing, and the analysis falls back to minutes estimated from job timings.
+Billing managers can import the report CSV instead
+(:func:`github_analysis.billing.import_usage_csv`).
 """
 
 from __future__ import annotations
@@ -319,8 +321,9 @@ def fetch_billing_usage(
                 endpoints.pop(0)
         else:
             log.warning(
-                "Billing usage report for %s is unavailable to this token (it needs "
-                "an organisation owner or billing manager); continuing without it.",
+                "Billing usage report for %s is unavailable to this token (the API "
+                "appears to need an organisation owner; billing managers can use "
+                "import-billing); continuing without it.",
                 account,
             )
             return None

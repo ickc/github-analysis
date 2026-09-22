@@ -136,8 +136,8 @@ def load_config(path: Path) -> AnalysisConfig:
         cache_dir = "cache"
         reports_dir = "reports"
         output_html = "docs/index.html"
-        # Optional: also fetch the billing usage report (needs an org owner or
-        # billing manager); skipped with a warning if access is missing.
+        # Optional: also fetch the billing usage report (the API appears to
+        # need an org owner); skipped with a warning if access is missing.
         billing = true
 
         [dashboard]

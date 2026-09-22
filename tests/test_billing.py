@@ -127,3 +127,76 @@ def test_config_billing_flag(tmp_path: Path):
     assert load_config(config_file).fetch_billing is False
     config_file.write_text('[analysis]\norg = "x"\nbilling = true\n', encoding="utf-8")
     assert load_config(config_file).fetch_billing is True
+
+
+# ---------------------------------------------------------------------------
+# CSV import (usage report downloaded from the billing pages)
+# ---------------------------------------------------------------------------
+
+_CSV = (
+    "﻿"  # GitHub's CSV starts with a byte-order mark
+    '"date","product","sku","quantity","unit_type","applied_cost_per_quantity",'
+    '"gross_amount","discount_amount","net_amount","organization","repository",'
+    '"cost_center_name"\n'
+    "2024-01-05,actions,actions_linux,4.5,minutes,0.008,0.036,0.036,0,demo-org,api,\n"
+    "2024-01-06,actions,actions_storage,0.1,gigabyte-hours,0.0003,3E-05,3E-05,0,demo-org,api,\n"
+    "2024-02-01,actions,actions_macos,2,minutes,0.08,0.16,0.06,0.1,demo-org,web,\n"
+    "2024-02-01,actions,actions_linux,9,minutes,0.008,0.072,0.072,0,other-org,x,\n"
+)
+
+
+def test_import_usage_csv_matches_api_cache(tmp_path: Path):
+    from github_analysis.billing import import_usage_csv
+
+    csv_file = tmp_path / "usage.csv"
+    csv_file.write_text(_CSV, encoding="utf-8")
+    cache = tmp_path / "cache"
+
+    assert import_usage_csv(csv_file, ORG, cache) == ["2024-01", "2024-02"]
+
+    cached = json.loads((cache / "_billing" / ORG / "2024-01.json").read_text())
+    assert cached[0] == {
+        "date": "2024-01-05",
+        "product": "actions",
+        "sku": "actions_linux",
+        "quantity": 4.5,
+        "unitType": "minutes",
+        "pricePerUnit": 0.008,
+        "grossAmount": 0.036,
+        "discountAmount": 0.036,
+        "netAmount": 0.0,
+        "organizationName": ORG,
+        "repositoryName": "api",
+    }
+
+    billing = BillingUsage.from_cache(ORG, cache, PERIOD)
+    assert billing is not None
+    frame = billing.actions_minutes_frame({})
+    # Storage is not minutes; the other org's row is skipped.
+    assert frame[["repo", "runtime_os", "minutes"]].values.tolist() == [
+        ["api", "linux", 4.5],
+        ["web", "macos", 2.0],
+    ]
+    assert frame["net_amount"].sum() == 0.1
+
+
+def test_import_billing_cli(tmp_path: Path):
+    from typer.testing import CliRunner
+
+    from github_analysis.cli import app
+
+    csv_file = tmp_path / "usage.csv"
+    csv_file.write_text(_CSV, encoding="utf-8")
+    cache = tmp_path / "cache"
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app, ["import-billing", str(csv_file), "--org", ORG, "--cache-dir", str(cache)]
+    )
+    assert result.exit_code == 0, result.output
+    assert "2 months" in result.output
+
+    result = runner.invoke(
+        app, ["import-billing", str(csv_file), "--org", "nobody", "--cache-dir", str(cache)]
+    )
+    assert result.exit_code == 1
