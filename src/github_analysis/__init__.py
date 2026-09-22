@@ -16,7 +16,7 @@ from .analysis import UsageSummary, summarize_usage
 from .config import AnalysisConfig, DateRange, load_config, parse_period
 from .csv_export import write_reports
 from .dataset import ActionsDataset
-from .domain import Job, Run, RunnerType, RuntimeOS
+from .domain import Job, Run, RunnerType, RuntimeOS, Visibility
 from .metrics import performance_table, usage_table
 from .report import build_dashboard, render_html
 
@@ -29,6 +29,7 @@ __all__ = [
     "RunnerType",
     "RuntimeOS",
     "UsageSummary",
+    "Visibility",
     "build_dashboard",
     "load_config",
     "parse_period",

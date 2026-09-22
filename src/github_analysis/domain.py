@@ -32,6 +32,7 @@ from typing import Any
 __all__ = [
     "RunnerType",
     "RuntimeOS",
+    "Visibility",
     "Job",
     "Run",
     "MILLISECONDS_PER_MINUTE",
@@ -76,6 +77,41 @@ class RuntimeOS(str, Enum):
             if any(keyword in flat for keyword in keywords):
                 return cls(os_name)
         return cls.UNKNOWN
+
+
+class Visibility(str, Enum):
+    """A repository's visibility, which decides whether its hosted-runner
+    minutes count towards the plan's included minutes.
+
+    Public repositories on standard GitHub-hosted runners are free; private and
+    internal repositories consume the plan quota. ``UNKNOWN`` means no
+    repository metadata was cached.
+    """
+
+    PUBLIC = "public"
+    PRIVATE = "private"
+    INTERNAL = "internal"
+    UNKNOWN = "unknown"
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "Visibility":
+        """Read a repository payload's ``visibility`` (or legacy ``private``)."""
+        value = str(payload.get("visibility") or "").lower()
+        if value in {v.value for v in cls}:
+            return cls(value)
+        private = payload.get("private")
+        if private is None:
+            return cls.UNKNOWN
+        return cls.PRIVATE if private else cls.PUBLIC
+
+    @property
+    def uses_quota(self) -> bool:
+        """Whether minutes may count towards the plan quota.
+
+        ``UNKNOWN`` counts, so that missing metadata overstates rather than
+        understates quota use.
+        """
+        return self is not Visibility.PUBLIC
 
 
 def _parse_dt(value: str | None) -> datetime | None:

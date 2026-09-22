@@ -11,9 +11,12 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-__all__ = ["write_synthetic_cache", "ORG"]
+__all__ = ["write_synthetic_cache", "ORG", "VISIBILITY"]
 
 ORG = "demo-org"
+
+# Repository metadata written to ``repo.json``: one private, one public repo.
+VISIBILITY: dict[str, str] = {"api": "private", "web": "public"}
 
 # (repo, workflow_path, runner_group, labels, conclusion, run_minutes, month_day)
 # run_minutes is the exact job execution time; billed = ceil(minutes) per job.
@@ -33,8 +36,14 @@ def _iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def write_synthetic_cache(cache_dir: Path, org: str = ORG) -> Path:
-    """Create a synthetic cache under ``cache_dir/org`` and return ``cache_dir``."""
+def write_synthetic_cache(
+    cache_dir: Path, org: str = ORG, *, repo_metadata: bool = True
+) -> Path:
+    """Create a synthetic cache under ``cache_dir/org`` and return ``cache_dir``.
+
+    ``repo_metadata=False`` omits ``repo.json``, as in caches written before
+    visibility was recorded.
+    """
     runs_by_repo: dict[str, list[dict]] = {}
     jobs_by_run: dict[tuple[str, int], list[dict]] = {}
 
@@ -75,6 +84,10 @@ def write_synthetic_cache(cache_dir: Path, org: str = ORG) -> Path:
         repo_dir = cache_dir / org / repo
         (repo_dir / "jobs").mkdir(parents=True, exist_ok=True)
         (repo_dir / "runs.json").write_text(json.dumps(runs), encoding="utf-8")
+        if repo_metadata:
+            visibility = VISIBILITY[repo]
+            meta = {"name": repo, "private": visibility != "public", "visibility": visibility}
+            (repo_dir / "repo.json").write_text(json.dumps(meta), encoding="utf-8")
         for run in runs:
             job_file = repo_dir / "jobs" / f"{run['id']}.json"
             job_file.write_text(json.dumps(jobs_by_run[(repo, run["id"])]), encoding="utf-8")

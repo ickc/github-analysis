@@ -15,7 +15,7 @@ from github_analysis.dataset import ActionsDataset
 from github_analysis.metrics import performance_table, usage_table
 from github_analysis.report import build_dashboard
 
-from .synthetic import ORG
+from .synthetic import ORG, write_synthetic_cache
 
 MULTIPLIERS = {"linux": 1.0, "windows": 2.0, "macos": 10.0}
 
@@ -30,6 +30,29 @@ def test_dataset_counts(dataset: ActionsDataset):
     assert dataset.jobs_frame.shape[0] == 7  # all completed
     assert dataset.hosted_jobs_frame.shape[0] == 6  # one self-hosted excluded
     assert dataset.runs_frame.shape[0] == 7
+
+
+def test_visibility_loaded_from_repo_metadata(dataset: ActionsDataset):
+    assert dataset.has_visibility
+    frame = dataset.hosted_jobs_frame
+    assert set(frame.loc[frame["repo"] == "api", "visibility"]) == {"private"}
+    assert set(frame.loc[frame["repo"] == "web", "visibility"]) == {"public"}
+
+
+def test_private_only_drops_public_repos(dataset: ActionsDataset):
+    private = dataset.private_only()
+    assert {job.repo for job in private.jobs} == {"api"}
+    assert {run.repo for run in private.runs} == {"api"}
+    assert usage_table(private, "repositories")["Total minutes"].sum() == 18
+
+
+def test_missing_repo_metadata_is_unknown_and_kept(tmp_path: Path):
+    cache = write_synthetic_cache(tmp_path / "cache", repo_metadata=False)
+    dataset = ActionsDataset.from_cache(ORG, cache)
+    assert not dataset.has_visibility
+    assert set(dataset.jobs_frame["visibility"]) == {"unknown"}
+    # Unknown visibility may use quota, so nothing is dropped.
+    assert len(dataset.private_only().jobs) == len(dataset.jobs)
 
 
 def test_workflow_path_resolved_onto_jobs(dataset: ActionsDataset):
