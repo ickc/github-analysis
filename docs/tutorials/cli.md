@@ -30,7 +30,7 @@ Create `analysis.toml` (works for an organization *or* a user account — set
 
 ```toml
 [analysis]
-org = "ickc"
+org = "example-org"
 period = "last-year"
 cache_dir = "cache"
 reports_dir = "reports"
@@ -55,16 +55,30 @@ an explicit `YYYY-MM-DD..YYYY-MM-DD` range.
 ## 3. Fetch raw data (stage 1)
 
 ```bash
-github-analysis fetch --org ickc --period last-year --cache-dir cache
+github-analysis fetch --org example-org --period last-year --cache-dir cache
 ```
 
-This caches verbatim API responses under `cache/ickc/<repo>/`. Re-running is
-cheap — cached runs and jobs are reused unless you pass `--force`.
+This caches verbatim API responses under `cache/example-org/<repo>/`, plus each
+repository's visibility in `repo.json`. Re-running is cheap — cached runs and
+jobs are reused unless you pass `--force`.
+
+Add `--billing` to also cache GitHub's billing usage report under
+`cache/_billing/example-org/`. The API appears to need an organisation owner (or the
+`user` token scope for a user account); without that access `fetch` prints a
+warning, skips it, and the dashboard falls back to estimated minutes.
+
+Billing managers can download the usage report CSV from the organisation's
+billing usage page instead (the summarized report covers up to a year) and
+import it into the same cache:
+
+```bash
+github-analysis import-billing usage-report.csv --org example-org --cache-dir cache
+```
 
 ## 4. Export metric CSVs (stage 2/3)
 
 ```bash
-github-analysis report --org ickc --cache-dir cache --output-dir reports
+github-analysis report --org example-org --cache-dir cache --output-dir reports
 ```
 
 Produces GitHub-compatible CSVs::
@@ -77,7 +91,7 @@ reports/actions-performance-metrics/{workflows,jobs,repositories,runtime-os,runn
 Peek at a table without writing files:
 
 ```bash
-github-analysis show usage repositories --org ickc --cache-dir cache --top 10
+github-analysis show usage repositories --org example-org --cache-dir cache --top 10
 ```
 
 ## 5. Build the dashboard (stage 3)
@@ -87,7 +101,9 @@ github-analysis dashboard --config analysis.toml
 ```
 
 Writes the static dashboard to `docs/index.html` and machine-readable metadata
-to `docs/summary.json`.
+to `docs/summary.json`. When repository visibility is cached, the minute charts
+have an **All repositories / Private repositories only** toggle, since only
+private repositories use the plan's included minutes.
 
 ## 6. Or do it all at once
 
@@ -100,6 +116,8 @@ github-analysis recreate --config analysis.toml
 - `--skip-fetch` — reuse the cache and only regenerate outputs.
 - `--skip-dashboard` — produce CSVs only.
 - `--force` — re-fetch even when cached.
+- `--billing/--no-billing` — fetch the billing usage report (default: the
+  config's `billing` setting).
 
 ## 7. (Optional) verify against a GitHub export
 

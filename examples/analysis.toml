@@ -6,6 +6,12 @@ reports_dir = "reports"
 data_dir = "reports"
 output_html = "docs/index.html"
 summary_json = "docs/summary.json"
+# Optional: also fetch GitHub's billing usage report, for the minutes GitHub
+# actually billed. The API appears to need an organisation owner; without that
+# access the fetch is skipped with a warning and the report uses estimates.
+# Billing managers can run `github-analysis import-billing` on the usage report
+# CSV from the billing pages instead.
+# billing = true
 
 [dashboard]
 title = "GitHub Actions Usage Analysis"

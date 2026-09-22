@@ -5,6 +5,7 @@ immutable config or dataset, and delegates to the library. The three pipeline
 stages map onto commands directly:
 
     fetch      stage 1 — cache raw runs/jobs from the GitHub API
+    import-billing  stage 1 — cache a billing usage report CSV from the web UI
     report     stage 2/3 — export GitHub-compatible metric CSVs
     dashboard  stage 3 — build the static HTML report + JSON summary
     recreate   run the whole pipeline from one config file
@@ -22,10 +23,11 @@ from rich.console import Console
 from rich.table import Table
 
 from .compare import main as compare_reports
-from .config import AnalysisConfig, load_config, parse_period
+from .config import AnalysisConfig, DateRange, load_config, parse_period
 from .csv_export import Metric, write_reports
+from .billing import import_usage_csv
 from .dataset import ActionsDataset
-from .fetch import fetch_org, fetch_repo
+from .fetch import fetch_billing_usage, fetch_org, fetch_repo
 from .metrics import PERFORMANCE_TABLES, USAGE_TABLES
 from .report import build_dashboard
 
@@ -49,6 +51,12 @@ def fetch(
     period: str = typer.Option("last-year", help="last-year, last-6-months, last-3-months, last-month, or YYYY-MM-DD..YYYY-MM-DD."),
     cache_dir: Path = typer.Option(Path("cache"), help="Directory to store cached JSON."),
     force: bool = typer.Option(False, "--force", help="Re-fetch even if cached."),
+    billing: bool = typer.Option(
+        False,
+        "--billing",
+        help="Also fetch the billing usage report (needs an org owner or billing "
+        "manager; skipped with a warning otherwise).",
+    ),
 ) -> None:
     """Fetch raw workflow-run and job data from GitHub and cache it (stage 1)."""
     try:
@@ -63,6 +71,42 @@ def fetch(
     else:
         fetched = fetch_org(org, cache_dir, date_range=date_range, force=force)
         console.print(f"[green]Done[/green]: fetched {len(fetched)} repos")
+
+    if billing:
+        _fetch_billing(org, cache_dir, date_range, force=force)
+
+
+def _fetch_billing(org: str, cache_dir: Path, date_range: DateRange, *, force: bool) -> None:
+    months = fetch_billing_usage(org, cache_dir, date_range, force=force)
+    if months is None:
+        console.print(
+            "[yellow]Billing usage report unavailable[/yellow] (the API appears to "
+            "need an org owner); billing managers can use 'import-billing' instead."
+        )
+    else:
+        console.print(f"[green]Done[/green]: billing usage for {len(months)} months")
+
+
+@app.command("import-billing")
+def import_billing(
+    csv_file: Path = typer.Argument(..., exists=True, dir_okay=False, help="Usage report CSV."),
+    org: str = typer.Option(..., help="GitHub organization (or user) name."),
+    cache_dir: Path = typer.Option(Path("cache"), help="Directory to store cached JSON."),
+) -> None:
+    """Cache a billing usage report CSV downloaded from GitHub's billing pages.
+
+    Use this when the billing API is unavailable, as it is to billing managers
+    who are not organisation owners: they can still download the summarized
+    usage report, which covers up to a year. The dashboard then treats it like fetched billing data.
+    """
+    months = import_usage_csv(csv_file, org, cache_dir)
+    if not months:
+        console.print(f"[yellow]No rows for {org} in {csv_file}.[/yellow]")
+        raise typer.Exit(1)
+    console.print(
+        f"[green]Imported[/green] billing usage for {len(months)} months "
+        f"({months[0]} to {months[-1]})"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +204,11 @@ def recreate(
     skip_fetch: bool = typer.Option(False, "--skip-fetch", help="Reuse cache; regenerate outputs."),
     skip_dashboard: bool = typer.Option(False, "--skip-dashboard", help="Do not build the dashboard."),
     metric: str = typer.Option("both", help="Which CSV metrics: usage, performance, or both."),
+    billing: Optional[bool] = typer.Option(
+        None,
+        "--billing/--no-billing",
+        help="Fetch the billing usage report (default: the config's analysis.billing).",
+    ),
 ) -> None:
     """Run the configured end-to-end pipeline: fetch, export, dashboard."""
     cfg = load_config(config)
@@ -168,6 +217,8 @@ def recreate(
         console.print(f"[bold]Fetching[/bold] {cfg.org} | period: {cfg.date_range}")
         fetched = fetch_org(cfg.org, cfg.cache_dir, date_range=cfg.date_range, force=force)
         console.print(f"[green]Done[/green]: fetched {len(fetched)} repos")
+        if cfg.fetch_billing if billing is None else billing:
+            _fetch_billing(cfg.org, cfg.cache_dir, cfg.date_range, force=force)
 
     dataset = ActionsDataset.from_cache(cfg.org, cfg.cache_dir)
     if dataset.is_empty:

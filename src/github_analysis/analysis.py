@@ -21,6 +21,8 @@ from .metrics import usage_table
 __all__ = [
     "UsageSummary",
     "billed_equivalent_by_os",
+    "billing_monthly_usage",
+    "monthly_comparison",
     "monthly_usage",
     "summarize_usage",
 ]
@@ -58,14 +60,65 @@ def monthly_usage(
     This is the long-form basis for every monthly chart: one row per hosted job
     with its month, OS, repo, conclusion and multiplier-adjusted minutes.
     """
-    frame = dataset.hosted_jobs_frame
-    if frame.empty:
-        return frame
-    frame = frame.copy()
+    # Even an empty frame gets ``adj_billed``, so charts over an empty scope
+    # (e.g. private-only when every repository is public) still work.
+    frame = dataset.hosted_jobs_frame.copy()
     frame["adj_billed"] = frame["billed_minutes"] * _multiplier_series(
         frame["runtime_os"], multipliers
     )
     return frame
+
+
+def billing_monthly_usage(
+    billing_frame: pd.DataFrame, multipliers: Mapping[str, float]
+) -> pd.DataFrame:
+    """Billing-report Actions minutes augmented with ``adj_billed``.
+
+    ``billing_frame`` is :meth:`BillingUsage.actions_minutes_frame
+    <github_analysis.billing.BillingUsage.actions_minutes_frame>`. The result
+    has the same ``month``/``runtime_os``/``adj_billed`` columns as
+    :func:`monthly_usage`, so the same monthly charts apply to it.
+    """
+    frame = billing_frame.copy()
+    frame["adj_billed"] = frame["minutes"].astype(float) * _multiplier_series(
+        frame["runtime_os"], multipliers
+    )
+    return frame
+
+
+def _monthly_all_and_private(
+    frame: pd.DataFrame, column: str
+) -> tuple[pd.Series, pd.Series]:
+    """Monthly sums of ``column`` over all repos and over non-public repos."""
+    if frame.empty:
+        empty = pd.Series(dtype=float)
+        return empty, empty
+    all_repos = frame.groupby("month")[column].sum()
+    private = frame[frame["visibility"] != "public"].groupby("month")[column].sum()
+    return all_repos, private.reindex(all_repos.index, fill_value=0.0)
+
+
+def monthly_comparison(
+    estimated: pd.DataFrame, billed: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    """Monthly billed-equivalent minutes: estimates by scope, and as billed.
+
+    ``estimated`` is :func:`monthly_usage`; its private-only column drops public
+    repos and keeps private, internal and unknown ones. ``billed`` (optional)
+    is :func:`billing_monthly_usage`, taken as is: the billing report already
+    omits free public-repository usage. Billing columns are present only when
+    ``billed`` is given; months missing from one source are ``NaN``.
+    """
+    est_all, est_private = _monthly_all_and_private(estimated, "adj_billed")
+    columns = {"Estimated, all repos": est_all, "Estimated, private only": est_private}
+    if billed is not None:
+        columns |= {
+            "Billed (GitHub report)": billed.groupby("month")["adj_billed"].sum(),
+            "Actions net charge (USD)": billed.groupby("month")["net_amount"].sum(),
+        }
+    table = pd.DataFrame(columns).sort_index()
+    table.index.name = "Month"
+    return table.reset_index()
 
 
 @dataclass(frozen=True, slots=True)

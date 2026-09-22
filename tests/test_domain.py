@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from github_analysis.domain import Job, Run, RunnerType, RuntimeOS
+from github_analysis.domain import Job, Run, RunnerType, RuntimeOS, Visibility
 
 
 def _job_payload(**overrides):
@@ -88,3 +88,22 @@ def test_run_wall_clock():
     assert run is not None
     assert run.wall_ms == 10 * 60_000
     assert run.is_completed
+
+
+# ---------------------------------------------------------------------------
+# Visibility
+# ---------------------------------------------------------------------------
+
+
+def test_visibility_from_payload():
+    assert Visibility.from_payload({"visibility": "internal", "private": True}) is Visibility.INTERNAL
+    assert Visibility.from_payload({"private": False}) is Visibility.PUBLIC
+    assert Visibility.from_payload({"private": True}) is Visibility.PRIVATE
+    assert Visibility.from_payload({}) is Visibility.UNKNOWN
+
+
+def test_visibility_uses_quota():
+    assert not Visibility.PUBLIC.uses_quota
+    assert Visibility.PRIVATE.uses_quota
+    assert Visibility.INTERNAL.uses_quota
+    assert Visibility.UNKNOWN.uses_quota

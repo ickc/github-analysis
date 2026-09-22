@@ -99,13 +99,51 @@ See [examples/analysis.toml](examples/analysis.toml). `period` accepts
 `YYYY-MM-DD..YYYY-MM-DD`.
 
 `[analysis]`: `org`, `period`, `cache_dir`, `reports_dir`, `data_dir`,
-`output_html`, `summary_json`.
+`output_html`, `summary_json`, `billing` (optional; see below).
 
 `[dashboard]`: `title`, `period_label`, `plan_minutes` (optional monthly cap),
 `extra_insights_html`, `extra_limitations_html`.
 
 `[os_multipliers]`: runtime OS billing multipliers for billed-equivalent
 estimates (defaults: linux 1, windows 2, macos 10).
+
+## Private-repository minutes and the billing report
+
+A plan's included minutes only apply to private (and internal) repositories:
+public repositories on standard GitHub-hosted runners are free. `fetch` records
+each repository's visibility (`repo.json` in the cache), and the dashboard's
+minute charts get an **All repositories / Private repositories only** toggle,
+with private-only KPIs and a `private_only` block in `summary.json`.
+Visibility is as of the fetch, so a repository whose visibility changed during
+the period is classified by its current visibility throughout. Caches written
+before visibility was recorded render without the toggle; re-run `fetch` to add
+it.
+
+Optionally, `fetch --billing` (or `billing = true` in the config) also caches
+GitHub's [billing usage report](https://docs.github.com/en/rest/billing/usage),
+which gives the minutes GitHub actually billed and the net charge. The dashboard
+then adds a billed-usage section and a `billing_report` block in `summary.json`.
+The API appears to admit **organisation owners only**: billing managers get a
+404 even with a classic token carrying `admin:org` (for a user account, the
+token needs the `user` scope). Without access the fetch logs a warning and
+caches nothing, and the dashboard notes that all figures are estimates.
+
+Billing managers can instead download the usage report CSV from the
+organisation's billing usage page (the *summarized* report covers up to a year
+and breaks usage down by repository) and import it:
+
+```bash
+github-analysis import-billing usage-report.csv --org example-org --cache-dir cache
+```
+
+This writes the same cache files as the API fetch, which then reuses them.
+
+The billing report appears to list only usage that counted towards the
+quota: in testing, a public repository's usage while public was not billed at
+all, while a repository billed for months was made public only afterwards.
+The dashboard therefore shows billed minutes as they are, with no visibility
+filter; being as-billed, they also reflect each repository's visibility *at the
+time*, which the private-only estimates cannot.
 
 ## Development
 

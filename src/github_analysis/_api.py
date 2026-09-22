@@ -94,9 +94,13 @@ def _request(
     return None
 
 
-def github_api(endpoint: str, **params: str) -> Any:
-    """Perform a single GET request against the GitHub API."""
-    return _request(endpoint, params=params)
+def github_api(endpoint: str, *, retry_on_rate_limit: bool = True, **params: str) -> Any:
+    """Perform a single GET request against the GitHub API.
+
+    Set ``retry_on_rate_limit=False`` where a 403 more likely means "no
+    permission" than "rate limited", to fail fast instead of backing off.
+    """
+    return _request(endpoint, params=params, retry_on_rate_limit=retry_on_rate_limit)
 
 
 def github_api_paginate(

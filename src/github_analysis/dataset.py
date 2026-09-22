@@ -20,15 +20,15 @@ object. The aggregate CSVs become an export (see
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
-from .domain import Job, Run
+from .domain import Job, Run, Visibility
 from .fetch import CachePaths
 
 __all__ = ["ActionsDataset", "JOB_COLUMNS", "RUN_COLUMNS"]
@@ -39,6 +39,7 @@ JOB_COLUMNS: tuple[str, ...] = (
     "job_id",
     "run_id",
     "repo",
+    "visibility",
     "job_name",
     "workflow_name",
     "workflow_path",
@@ -65,11 +66,12 @@ RUN_COLUMNS: tuple[str, ...] = (
 )
 
 
-def _job_to_row(job: Job) -> dict[str, Any]:
+def _job_to_row(job: Job, visibility: Visibility) -> dict[str, Any]:
     return {
         "job_id": job.job_id,
         "run_id": job.run_id,
         "repo": job.repo,
+        "visibility": visibility.value,
         "job_name": job.name,
         "workflow_name": job.workflow_name,
         "workflow_path": job.workflow_path,
@@ -95,19 +97,29 @@ class ActionsDataset:
 
     Construct it with :meth:`from_cache`. The DataFrame views are computed once
     and memoised, so repeated metric calls share the same frames.
+
+    ``visibility`` maps repo name to its :class:`~github_analysis.domain.Visibility`
+    at fetch time; repos without cached metadata are ``UNKNOWN``.
     """
 
     org: str
     jobs: tuple[Job, ...]
     runs: tuple[Run, ...]
+    visibility: Mapping[str, Visibility] = field(default_factory=dict)
 
     # -- constructors -------------------------------------------------------
 
     @classmethod
     def from_records(
-        cls, org: str, jobs: Iterable[Job], runs: Iterable[Run]
+        cls,
+        org: str,
+        jobs: Iterable[Job],
+        runs: Iterable[Run],
+        visibility: Mapping[str, Visibility] | None = None,
     ) -> "ActionsDataset":
-        return cls(org=org, jobs=tuple(jobs), runs=tuple(runs))
+        return cls(
+            org=org, jobs=tuple(jobs), runs=tuple(runs), visibility=dict(visibility or {})
+        )
 
     @classmethod
     def from_cache(cls, org: str, cache_dir: Path) -> "ActionsDataset":
@@ -120,14 +132,49 @@ class ActionsDataset:
         runs = tuple(_load_runs(paths))
         path_by_run = {run.run_id: run.workflow_path for run in runs}
         jobs = tuple(_load_jobs(paths, path_by_run))
-        return cls(org=org, jobs=jobs, runs=runs)
+        return cls(org=org, jobs=jobs, runs=runs, visibility=dict(_load_visibility(paths)))
+
+    # -- projections --------------------------------------------------------
+
+    def visibility_of(self, repo: str) -> Visibility:
+        return self.visibility.get(repo, Visibility.UNKNOWN)
+
+    @property
+    def has_visibility(self) -> bool:
+        """Whether any repo in the dataset has known visibility."""
+        return any(
+            self.visibility_of(repo) is not Visibility.UNKNOWN
+            for repo in {job.repo for job in self.jobs}
+        )
+
+    def private_only(self) -> "ActionsDataset":
+        """The subset of repos whose minutes may count towards the plan quota.
+
+        Keeps private, internal and unknown-visibility repos; drops public ones
+        (see :attr:`Visibility.uses_quota`).
+        """
+        keep = {
+            repo
+            for repo in {job.repo for job in self.jobs} | {run.repo for run in self.runs}
+            if self.visibility_of(repo).uses_quota
+        }
+        return ActionsDataset(
+            org=self.org,
+            jobs=tuple(job for job in self.jobs if job.repo in keep),
+            runs=tuple(run for run in self.runs if run.repo in keep),
+            visibility=self.visibility,
+        )
 
     # -- tidy frames --------------------------------------------------------
 
     @cached_property
     def jobs_frame(self) -> pd.DataFrame:
         """One row per *completed* job, with all derived measures."""
-        rows = [_job_to_row(job) for job in self.jobs if job.is_completed]
+        rows = [
+            _job_to_row(job, self.visibility_of(job.repo))
+            for job in self.jobs
+            if job.is_completed
+        ]
         if not rows:
             return pd.DataFrame(columns=JOB_COLUMNS)
         return pd.DataFrame.from_records(rows, columns=JOB_COLUMNS)
@@ -197,6 +244,15 @@ def _load_runs(paths: CachePaths) -> Iterable[Run]:
             run = Run.from_payload(payload, repo=repo)
             if run is not None:
                 yield run
+
+
+def _load_visibility(paths: CachePaths) -> Iterable[tuple[str, Visibility]]:
+    org_dir = paths.org_dir
+    if not org_dir.exists():
+        return
+    for meta_file, payload in _iter_cached_json(sorted(org_dir.glob("*/repo.json"))):
+        if isinstance(payload, dict):
+            yield meta_file.parent.name, Visibility.from_payload(payload)
 
 
 def _load_jobs(paths: CachePaths, path_by_run: dict[int, str]) -> Iterable[Job]:

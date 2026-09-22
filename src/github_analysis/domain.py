@@ -32,8 +32,10 @@ from typing import Any
 __all__ = [
     "RunnerType",
     "RuntimeOS",
+    "Visibility",
     "Job",
     "Run",
+    "BillingUsageItem",
     "MILLISECONDS_PER_MINUTE",
 ]
 
@@ -76,6 +78,41 @@ class RuntimeOS(str, Enum):
             if any(keyword in flat for keyword in keywords):
                 return cls(os_name)
         return cls.UNKNOWN
+
+
+class Visibility(str, Enum):
+    """A repository's visibility, which decides whether its hosted-runner
+    minutes count towards the plan's included minutes.
+
+    Public repositories on standard GitHub-hosted runners are free; private and
+    internal repositories consume the plan quota. ``UNKNOWN`` means no
+    repository metadata was cached.
+    """
+
+    PUBLIC = "public"
+    PRIVATE = "private"
+    INTERNAL = "internal"
+    UNKNOWN = "unknown"
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "Visibility":
+        """Read a repository payload's ``visibility`` (or legacy ``private``)."""
+        value = str(payload.get("visibility") or "").lower()
+        if value in {v.value for v in cls}:
+            return cls(value)
+        private = payload.get("private")
+        if private is None:
+            return cls.UNKNOWN
+        return cls.PRIVATE if private else cls.PUBLIC
+
+    @property
+    def uses_quota(self) -> bool:
+        """Whether minutes may count towards the plan quota.
+
+        ``UNKNOWN`` counts, so that missing metadata overstates rather than
+        understates quota use.
+        """
+        return self is not Visibility.PUBLIC
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -251,6 +288,71 @@ class Run:
         Mirrors the duration GitHub shows in the Actions UI.
         """
         return _duration_ms(self.run_started_at, self.updated_at)
+
+
+@dataclass(frozen=True, slots=True)
+class BillingUsageItem:
+    """One line of GitHub's billing usage report (enhanced billing platform).
+
+    Unlike :class:`Job`, which estimates billed minutes from timestamps, these
+    are the quantities GitHub itself billed, aggregated per day, repository and
+    SKU. They carry no repository visibility, but the report appears to omit
+    free public-repository usage (see :mod:`github_analysis.billing`).
+    """
+
+    date: datetime | None
+    product: str
+    sku: str
+    quantity: float
+    unit_type: str
+    price_per_unit: float
+    gross_amount: float
+    discount_amount: float
+    net_amount: float
+    repo: str
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "BillingUsageItem | None":
+        """Parse one ``usageItems`` entry, or ``None`` if it has no product."""
+        product = payload.get("product")
+        if not product:
+            return None
+        # ``repositoryName`` may be ``owner/repo``; keep only the repo name to
+        # match the cache layout.
+        repo = str(payload.get("repositoryName") or "").rsplit("/", 1)[-1]
+        return cls(
+            date=_parse_dt(payload.get("date")),
+            product=str(product),
+            sku=str(payload.get("sku") or ""),
+            quantity=_to_float(payload.get("quantity")),
+            unit_type=str(payload.get("unitType") or ""),
+            price_per_unit=_to_float(payload.get("pricePerUnit")),
+            gross_amount=_to_float(payload.get("grossAmount")),
+            discount_amount=_to_float(payload.get("discountAmount")),
+            net_amount=_to_float(payload.get("netAmount")),
+            repo=repo,
+        )
+
+    @property
+    def is_actions_minutes(self) -> bool:
+        """Whether this line is GitHub Actions runner time, in minutes."""
+        return self.product.lower() == "actions" and self.unit_type.lower().startswith("minute")
+
+    @property
+    def runtime_os(self) -> RuntimeOS:
+        """Runner OS, classified from the SKU (e.g. ``actions_linux``)."""
+        return RuntimeOS.from_labels(self.sku.replace("_", " ").split())
+
+    @property
+    def month(self) -> str | None:
+        return None if self.date is None else self.date.strftime("%Y-%m")
+
+
+def _to_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def utcnow() -> datetime:
