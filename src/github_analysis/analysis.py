@@ -60,10 +60,9 @@ def monthly_usage(
     This is the long-form basis for every monthly chart: one row per hosted job
     with its month, OS, repo, conclusion and multiplier-adjusted minutes.
     """
-    frame = dataset.hosted_jobs_frame
-    if frame.empty:
-        return frame
-    frame = frame.copy()
+    # Even an empty frame gets ``adj_billed``, so charts over an empty scope
+    # (e.g. private-only when every repository is public) still work.
+    frame = dataset.hosted_jobs_frame.copy()
     frame["adj_billed"] = frame["billed_minutes"] * _multiplier_series(
         frame["runtime_os"], multipliers
     )

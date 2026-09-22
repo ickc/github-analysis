@@ -186,6 +186,22 @@ def test_dashboard_private_scope_toggle(tmp_path: Path):
     assert metadata["billing_report"] is None
 
 
+def test_dashboard_when_every_repo_is_public(tmp_path: Path, monkeypatch):
+    from . import synthetic
+
+    # As in CI, where the only repository fetched is public: the private-only
+    # scope is empty, and every private chart must still render.
+    monkeypatch.setattr(synthetic, "VISIBILITY", {"api": "public", "web": "public"})
+    config = _config(tmp_path, plan_minutes=5.0)
+    write_synthetic_cache(config.cache_dir)
+    metadata = build_dashboard(config)
+
+    assert "Private repositories only" in config.output_html.read_text()
+    private = metadata["private_only"]
+    assert private["billed_equivalent_minutes_period"] == 0
+    assert private["monthly_billed_equivalent_minutes"] == {"2024-01": 0.0, "2024-02": 0.0}
+
+
 def test_dashboard_without_visibility_or_billing(tmp_path: Path):
     config = _config(tmp_path, plan_minutes=5.0)
     write_synthetic_cache(config.cache_dir, repo_metadata=False)
