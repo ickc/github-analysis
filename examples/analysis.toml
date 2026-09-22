@@ -6,6 +6,10 @@ reports_dir = "reports"
 data_dir = "reports"
 output_html = "docs/index.html"
 summary_json = "docs/summary.json"
+# Optional: also fetch GitHub's billing usage report, for the minutes GitHub
+# actually billed. Needs an organisation owner or billing manager; without that
+# access the fetch is skipped with a warning and the report uses estimates.
+# billing = true
 
 [dashboard]
 title = "GitHub Actions Usage Analysis"

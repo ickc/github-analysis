@@ -99,13 +99,35 @@ See [examples/analysis.toml](examples/analysis.toml). `period` accepts
 `YYYY-MM-DD..YYYY-MM-DD`.
 
 `[analysis]`: `org`, `period`, `cache_dir`, `reports_dir`, `data_dir`,
-`output_html`, `summary_json`.
+`output_html`, `summary_json`, `billing` (optional; see below).
 
 `[dashboard]`: `title`, `period_label`, `plan_minutes` (optional monthly cap),
 `extra_insights_html`, `extra_limitations_html`.
 
 `[os_multipliers]`: runtime OS billing multipliers for billed-equivalent
 estimates (defaults: linux 1, windows 2, macos 10).
+
+## Private-repository minutes and the billing report
+
+A plan's included minutes only apply to private (and internal) repositories:
+public repositories on standard GitHub-hosted runners are free. `fetch` records
+each repository's visibility (`repo.json` in the cache), and the dashboard's
+minute charts get an **All repositories / Private repositories only** toggle,
+with private-only KPIs and a `private_only` block in `summary.json`.
+Visibility is as of the fetch, so a repository whose visibility changed during
+the period is classified by its current visibility throughout. Caches written
+before visibility was recorded render without the toggle; re-run `fetch` to add
+it.
+
+Optionally, `fetch --billing` (or `billing = true` in the config) also caches
+GitHub's [billing usage report](https://docs.github.com/en/rest/billing/usage),
+which gives the minutes GitHub actually billed and the net charge. The dashboard
+then adds a billed-usage section and a `billing_report` block in `summary.json`.
+The report needs an **organisation owner or billing manager** (for a user
+account, a token with the `user` scope); without that access the fetch logs a
+warning and caches nothing, and the dashboard notes that all figures are
+estimates. The billing report lists public repositories like private ones, so
+its private-only view also relies on the cached visibility.
 
 ## Development
 

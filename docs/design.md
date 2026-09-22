@@ -14,7 +14,8 @@ conventions that keep the code auditable.
               ▼
    ┌─────────────────────┐
    │  Stage 1: raw cache  │   verbatim JSON on disk
-   │  github_analysis.fetch│   {cache}/{org}/{repo}/runs.json, jobs/{id}.json
+   │  github_analysis.fetch│   {cache}/{org}/{repo}/runs.json, jobs/{id}.json,
+   │                       │   repo.json; {cache}/_billing/{org}/{month}.json
    └─────────────────────┘
               │  (parse, pure)
               ▼
@@ -100,6 +101,25 @@ This is the standard "tidy data" trade-off: store data in its most granular,
 long form and aggregate on demand, rather than committing early to a lossy
 aggregate.
 
+### Optional inputs: visibility and the billing report
+
+Two inputs enrich the dataset but are never required:
+
+- **Repository visibility** (`repo.json`, trimmed from the repository listing)
+  becomes a `visibility` column on the job table.
+  {py:meth}`~github_analysis.dataset.ActionsDataset.private_only` projects the
+  dataset onto repositories that can use the plan quota, and the report builds
+  each minute chart twice and joins the two with
+  {py:func}`~github_analysis.charts.scope_toggle`.
+- **The billing usage report** ({py:class}`~github_analysis.billing.BillingUsage`)
+  holds the minutes GitHub actually billed. It sits beside the dataset rather
+  than inside it, since it is per day and per SKU rather than per job.
+
+Both degrade to "absent": missing visibility is `unknown` (counted as
+quota-using, so private-only never understates), and a missing billing report is
+`None`. The dashboard then omits the toggle or the billing section and says so
+in its limitations.
+
 ## Functional conventions
 
 - **Immutability.** Records and {py:class}`~github_analysis.config.AnalysisConfig`
@@ -126,5 +146,8 @@ aggregate.
   model standard hosted-runner pricing and should be set to match your plan.
 - **Monthly estimate window.** Headline "monthly demand" treats the selected
   period as an annual window (total ÷ 12); choose the period accordingly.
+- **Visibility is current, not historical.** The API does not record a
+  repository's visibility at the time of each run, so private-only views use the
+  visibility at fetch time for the whole period.
 - **Hosted-only metrics.** Self-hosted jobs are present in the cache but excluded
   from the metric tables, matching GitHub's exported metrics.

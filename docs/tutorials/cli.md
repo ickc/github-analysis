@@ -58,8 +58,14 @@ an explicit `YYYY-MM-DD..YYYY-MM-DD` range.
 github-analysis fetch --org ickc --period last-year --cache-dir cache
 ```
 
-This caches verbatim API responses under `cache/ickc/<repo>/`. Re-running is
-cheap — cached runs and jobs are reused unless you pass `--force`.
+This caches verbatim API responses under `cache/ickc/<repo>/`, plus each
+repository's visibility in `repo.json`. Re-running is cheap — cached runs and
+jobs are reused unless you pass `--force`.
+
+Add `--billing` to also cache GitHub's billing usage report under
+`cache/_billing/ickc/`. It needs an organisation owner or billing manager (or
+the `user` token scope for a user account); without that access `fetch` prints
+a warning, skips it, and the dashboard falls back to estimated minutes.
 
 ## 4. Export metric CSVs (stage 2/3)
 
@@ -87,7 +93,9 @@ github-analysis dashboard --config analysis.toml
 ```
 
 Writes the static dashboard to `docs/index.html` and machine-readable metadata
-to `docs/summary.json`.
+to `docs/summary.json`. When repository visibility is cached, the minute charts
+have an **All repositories / Private repositories only** toggle, since only
+private repositories use the plan's included minutes.
 
 ## 6. Or do it all at once
 
@@ -100,6 +108,8 @@ github-analysis recreate --config analysis.toml
 - `--skip-fetch` — reuse the cache and only regenerate outputs.
 - `--skip-dashboard` — produce CSVs only.
 - `--force` — re-fetch even when cached.
+- `--billing/--no-billing` — fetch the billing usage report (default: the
+  config's `billing` setting).
 
 ## 7. (Optional) verify against a GitHub export
 
