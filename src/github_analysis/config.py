@@ -95,6 +95,7 @@ class AnalysisConfig:
     period_label: str = "selected period"
     title: str = "GitHub Actions Usage Analysis"
     plan_minutes: float | None = None
+    fetch_billing: bool = False
     days_per_month: float = DEFAULT_DAYS_PER_MONTH
     os_multipliers: Mapping[str, float] = field(
         default_factory=lambda: dict(DEFAULT_OS_MULTIPLIERS)
@@ -135,6 +136,9 @@ def load_config(path: Path) -> AnalysisConfig:
         cache_dir = "cache"
         reports_dir = "reports"
         output_html = "docs/index.html"
+        # Optional: also fetch the billing usage report (needs an org owner or
+        # billing manager); skipped with a warning if access is missing.
+        billing = true
 
         [dashboard]
         title = "..."
@@ -177,6 +181,7 @@ def load_config(path: Path) -> AnalysisConfig:
         period_label=str(dashboard.get("period_label", period)),
         title=str(dashboard.get("title", "GitHub Actions Usage Analysis")),
         plan_minutes=float(plan) if plan is not None else None,
+        fetch_billing=bool(analysis.get("billing", False)),
         days_per_month=float(dashboard.get("days_per_month", DEFAULT_DAYS_PER_MONTH)),
         os_multipliers=os_multipliers,
         extra_insights_html=tuple(str(x) for x in dashboard.get("extra_insights_html", [])),

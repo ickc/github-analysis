@@ -11,10 +11,16 @@ Cache layout::
     {cache_dir}/{org}/{repo}/repo.json        # repository metadata (visibility)
     {cache_dir}/{org}/{repo}/runs.json        # list of workflow-run payloads
     {cache_dir}/{org}/{repo}/jobs/{run_id}.json  # list of job payloads per run
+    {cache_dir}/_billing/{org}/{YYYY-MM}.json # billing usage items (optional)
 
 ``repo.json`` keeps only the few repository fields the analysis needs (see
 :data:`REPO_METADATA_FIELDS`), not the full payload. It records the
 repository's visibility *at fetch time* and is rewritten on every org fetch.
+
+The billing usage report is optional: it needs an organisation owner or billing
+manager (or, for a user account, the ``user`` token scope). Without that access
+:func:`fetch_billing_usage` logs a warning and caches nothing, and the analysis
+falls back to minutes estimated from job timings.
 """
 
 from __future__ import annotations
@@ -23,11 +29,13 @@ import json
 import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from ._api import github_api, github_api_paginate
 from .config import DateRange
+from .domain import utcnow
 from github.GithubException import GithubException
 
 log = logging.getLogger(__name__)
@@ -35,6 +43,8 @@ log = logging.getLogger(__name__)
 __all__ = [
     "CachePaths",
     "REPO_METADATA_FIELDS",
+    "billing_months",
+    "fetch_billing_usage",
     "fetch_org",
     "fetch_repo",
     "list_org_repos",
@@ -70,6 +80,14 @@ class CachePaths:
 
     def job_file(self, repo: str, run_id: int) -> Path:
         return self.jobs_dir(repo) / f"{run_id}.json"
+
+    @property
+    def billing_dir(self) -> Path:
+        # Outside ``org_dir`` so it can never be mistaken for a repository.
+        return self.cache_dir / "_billing" / self.org
+
+    def billing_file(self, month: str) -> Path:
+        return self.billing_dir / f"{month}.json"
 
 
 def _write_json(path: Path, data: object) -> None:
@@ -108,6 +126,26 @@ list_org_repos = list_account_repos
 def get_repo(org: str, repo: str) -> dict[str, Any]:
     """The repository payload for ``org/repo``."""
     return github_api(f"/repos/{org}/{repo}")
+
+
+# Billing usage endpoints, tried in order: organisation, then user account.
+_BILLING_USAGE_ENDPOINTS: tuple[str, ...] = (
+    "/organizations/{account}/settings/billing/usage",
+    "/users/{account}/settings/billing/usage",
+)
+
+# Statuses meaning "this token/account cannot read the billing report".
+_BILLING_UNAVAILABLE = frozenset({401, 403, 404, 410})
+
+
+def get_billing_usage(endpoint: str, month: str) -> list[dict[str, Any]]:
+    """Billing usage items for one ``YYYY-MM`` month."""
+    year, month_number = month.split("-")
+    payload = github_api(
+        endpoint, retry_on_rate_limit=False, year=year, month=str(int(month_number))
+    )
+    items = payload.get("usageItems", []) if isinstance(payload, dict) else []
+    return items if isinstance(items, list) else []
 
 
 def list_workflow_runs(
@@ -229,3 +267,63 @@ def fetch_org(
         except Exception as exc:  # noqa: BLE001 - resilience over strictness
             log.warning("Skipping %s/%s: %s", org, repo, exc)
     return fetched
+
+
+# ---------------------------------------------------------------------------
+# Billing usage report (optional)
+# ---------------------------------------------------------------------------
+
+
+def billing_months(date_range: DateRange) -> list[str]:
+    """Calendar months (``YYYY-MM``) overlapping ``[since, until)``."""
+    year, month = date_range.since.year, date_range.since.month
+    months: list[str] = []
+    while datetime(year, month, 1) < date_range.until.replace(tzinfo=None):
+        months.append(f"{year:04d}-{month:02d}")
+        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return months
+
+
+def fetch_billing_usage(
+    account: str,
+    cache_dir: Path,
+    date_range: DateRange,
+    *,
+    force: bool = False,
+) -> list[str] | None:
+    """Fetch and cache the billing usage report, one file per month.
+
+    Completed months are reused from the cache unless ``force`` is set; the
+    current month is always refreshed. Returns the cached months, or ``None``
+    if the report is unavailable to this token, in which case nothing is
+    written and the caller should carry on without it.
+    """
+    paths = CachePaths(cache_dir, account)
+    current = utcnow().strftime("%Y-%m")
+    endpoints = [e.format(account=account) for e in _BILLING_USAGE_ENDPOINTS]
+
+    cached: list[str] = []
+    for month in billing_months(date_range):
+        billing_file = paths.billing_file(month)
+        if not force and month < current and billing_file.exists():
+            cached.append(month)
+            continue
+        while endpoints:
+            try:
+                items = get_billing_usage(endpoints[0], month)
+                break
+            except GithubException as exc:
+                if exc.status not in _BILLING_UNAVAILABLE:
+                    raise
+                log.debug("Billing usage unavailable at %s: %s", endpoints[0], exc.status)
+                endpoints.pop(0)
+        else:
+            log.warning(
+                "Billing usage report for %s is unavailable to this token (it needs "
+                "an organisation owner or billing manager); continuing without it.",
+                account,
+            )
+            return None
+        _write_json(billing_file, items)
+        cached.append(month)
+    return cached
