@@ -15,8 +15,10 @@ only". There are two ways to cache it:
   download from the organisation's billing pages (the *summarized* report
   covers up to a year and has the per-repository breakdown needed here).
 
-The report does not record repository visibility, so the private-only view is
-derived from the dataset's cached repository metadata, as for the estimates.
+The report appears to list only usage that counted towards the plan quota:
+public-repository usage on standard runners, which is free, is omitted. So the
+billed minutes are used as they are, with no visibility filter, and they
+reflect each repository's visibility at the time of use.
 """
 
 from __future__ import annotations

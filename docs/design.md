@@ -116,6 +116,9 @@ Two inputs enrich the dataset but are never required:
   than inside it, since it is per day and per SKU rather than per job. It is
   fetched from the REST API (organisation owners) or imported from the usage
   report CSV that billing managers can download; both write the same cache.
+  The report appears to omit free public-repository usage, so it is shown as
+  billed, with no visibility filter: it is the quota use, with each
+  repository's visibility as it was at the time.
 
 Both degrade to "absent": missing visibility is `unknown` (counted as
 quota-using, so private-only never understates), and a missing billing report is

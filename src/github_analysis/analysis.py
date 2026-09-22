@@ -102,22 +102,20 @@ def _monthly_all_and_private(
 def monthly_comparison(
     estimated: pd.DataFrame, billed: pd.DataFrame | None = None
 ) -> pd.DataFrame:
-    """Monthly billed-equivalent minutes: all repos vs private-only.
+    """Monthly billed-equivalent minutes: estimates by scope, and as billed.
 
-    ``estimated`` is :func:`monthly_usage`; ``billed`` (optional) is
-    :func:`billing_monthly_usage`. Private-only drops public repos and keeps
-    private, internal and unknown ones. Billing columns are present only when
+    ``estimated`` is :func:`monthly_usage`; its private-only column drops public
+    repos and keeps private, internal and unknown ones. ``billed`` (optional)
+    is :func:`billing_monthly_usage`, taken as is: the billing report already
+    omits free public-repository usage. Billing columns are present only when
     ``billed`` is given; months missing from one source are ``NaN``.
     """
     est_all, est_private = _monthly_all_and_private(estimated, "adj_billed")
     columns = {"Estimated, all repos": est_all, "Estimated, private only": est_private}
     if billed is not None:
-        billed_all, billed_private = _monthly_all_and_private(billed, "adj_billed")
-        net_all, _ = _monthly_all_and_private(billed, "net_amount")
         columns |= {
-            "Billed, all repos": billed_all,
-            "Billed, private only": billed_private,
-            "Actions net charge (USD)": net_all,
+            "Billed (GitHub report)": billed.groupby("month")["adj_billed"].sum(),
+            "Actions net charge (USD)": billed.groupby("month")["net_amount"].sum(),
         }
     table = pd.DataFrame(columns).sort_index()
     table.index.name = "Month"

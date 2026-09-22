@@ -136,8 +136,14 @@ and breaks usage down by repository) and import it:
 github-analysis import-billing usage-report.csv --org example-org --cache-dir cache
 ```
 
-This writes the same cache files as the API fetch, which then reuses them. The billing report lists public repositories like private ones, so
-its private-only view also relies on the cached visibility.
+This writes the same cache files as the API fetch, which then reuses them.
+
+The billing report appears to list only usage that counted towards the
+quota: in testing, a repository that was public throughout had no billed usage
+at all, while a repository billed for months was made public only afterwards.
+The dashboard therefore shows billed minutes as they are, with no visibility
+filter; being as-billed, they also reflect each repository's visibility *at the
+time*, which the private-only estimates cannot.
 
 ## Development
 

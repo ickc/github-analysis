@@ -133,35 +133,35 @@ class _Scopes:
 
 @dataclass(frozen=True)
 class _BillingView:
-    """The billing report projected for the dashboard."""
+    """The billing report projected for the dashboard.
+
+    Taken as billed, with no visibility filter: the report appears to omit
+    free public-repository usage, so it is already the quota use.
+    """
 
     usage: BillingUsage
     monthly: pd.DataFrame  # billing_monthly_usage frame
 
     @property
-    def private_monthly(self) -> pd.DataFrame:
-        return self.monthly[self.monthly["visibility"] != "public"]
+    def total(self) -> float:
+        return float(self.monthly["adj_billed"].sum())
 
-    def total(self, *, private: bool) -> float:
-        frame = self.private_monthly if private else self.monthly
-        return float(frame["adj_billed"].sum())
-
-    def monthly_average(self, *, private: bool) -> float:
+    @property
+    def monthly_average(self) -> float:
         months = len(self.usage.months)
-        return self.total(private=private) / months if months else 0.0
+        return self.total / months if months else 0.0
 
     @property
     def net_charge(self) -> float:
         return float(self.monthly["net_amount"].sum())
 
-    def months_at_cap(self, plan_minutes: float, *, private: bool) -> list[str]:
+    def months_at_cap(self, plan_minutes: float) -> list[str]:
         """Months whose billed-equivalent minutes reached ``plan_minutes``.
 
         Billed usage stops at the cap when a spending limit blocks further
         runs, so these months had demand the plan did not serve.
         """
-        frame = self.private_monthly if private else self.monthly
-        by_month = frame.groupby("month")["adj_billed"].sum()
+        by_month = self.monthly.groupby("month")["adj_billed"].sum()
         # Tolerance for fractional minutes summing to just under the cap.
         return sorted(by_month[by_month >= plan_minutes - 0.5].index)
 
@@ -206,25 +206,15 @@ def _insights(
         text = (
             f"GitHub's billing usage report covers <b>{months}</b> "
             f"month{'s' if months != 1 else ''} and records "
-            f"<b>{billing.total(private=False):,.0f}</b> billed-equivalent minutes "
-            f"from all repositories"
+            f"<b>{billing.total:,.0f}</b> billed-equivalent minutes counted towards "
+            f"the quota (<b>{billing.monthly_average:,.0f} minutes/month</b> on average"
         )
-        if private_summary is not None:
-            text += (
-                f", <b>{billing.total(private=True):,.0f}</b> of them from private "
-                f"repositories (<b>{billing.monthly_average(private=True):,.0f} "
-                "minutes/month</b> on average"
-            )
-            if config.plan_minutes:
-                pct = billing.monthly_average(private=True) / config.plan_minutes * 100
-                text += f", {pct:.0f}% of the cap"
-            text += ")"
-        text += f". The net Actions charge was <b>${billing.net_charge:,.2f}</b>."
+        if config.plan_minutes:
+            text += f", {billing.monthly_average / config.plan_minutes * 100:.0f}% of the cap"
+        text += f"). The net Actions charge was <b>${billing.net_charge:,.2f}</b>."
         items.append(text)
         if config.plan_minutes:
-            at_cap = billing.months_at_cap(
-                config.plan_minutes, private=private_summary is not None
-            )
+            at_cap = billing.months_at_cap(config.plan_minutes)
             if at_cap:
                 consequence = (
                     "With no net charge, runs beyond the cap in those months were "
@@ -278,12 +268,19 @@ def _limitations(
             "organisation owner, or import the usage report CSV), so all minutes "
             "are estimated from job durations."
         )
-    elif billing.missing_months:
-        items.append(
-            "The billing usage report is missing for "
-            f"{', '.join(billing.missing_months)}; billing figures cover only "
-            "the months shown."
-        )
+    else:
+        if has_visibility:
+            items.append(
+                "Where they differ, prefer the billed figures to the private-only "
+                "estimates: billing reflects each repository's visibility at the "
+                "time, and includes repositories since transferred out or deleted."
+            )
+        if billing.missing_months:
+            items.append(
+                "The billing usage report is missing for "
+                f"{', '.join(billing.missing_months)}; billing figures cover only "
+                "the months shown."
+            )
     items.extend(config.extra_limitations_html)
     return items
 
@@ -313,39 +310,27 @@ def _cards(
         if config.plan_minutes and private_summary.plan_pct is not None:
             cards.append(("Plan cap, private repos", f"{private_summary.plan_pct:.0f}% used avg"))
     if billing is not None:
-        scope = "private repos" if private_summary is not None else "all repos"
-        cards.append(
-            (
-                f"Billed minutes/month, {scope} (GitHub report)",
-                f"{billing.monthly_average(private=private_summary is not None):,.0f}",
-            )
-        )
+        cards.append(("Billed minutes/month (GitHub report)", f"{billing.monthly_average:,.0f}"))
+        if config.plan_minutes:
+            pct = billing.monthly_average / config.plan_minutes * 100
+            cards.append(("Plan cap, as billed", f"{pct:.0f}% used avg"))
     return cards
 
 
-def _billing_html(
-    billing: _BillingView,
-    scopes: _Scopes,
-    config: AnalysisConfig,
-) -> str:
-    def build(frame: pd.DataFrame) -> Figure:
-        return charts.monthly_billed_by_os(
-            frame,
-            config.os_multipliers,
-            config.plan_minutes,
-            title="Monthly billed-equivalent minutes by OS (GitHub billing report)",
-        )
-
-    if scopes.private is None:
-        fig = build(billing.monthly)
-    else:
-        fig = charts.scope_toggle(build(billing.monthly), build(billing.private_monthly))
+def _billing_html(billing: _BillingView, config: AnalysisConfig) -> str:
+    fig = charts.monthly_billed_by_os(
+        billing.monthly,
+        config.os_multipliers,
+        config.plan_minutes,
+        title="Monthly billed-equivalent minutes by OS (GitHub billing report)",
+    )
     return f"""
   <h2>Billed usage from GitHub's billing report</h2>
   <p class="muted">Minutes GitHub actually billed, per its billing usage report,
-  with the configured OS multipliers applied. The report lists public
-  repositories like private ones; the private-only view uses cached repository
-  visibility.</p>
+  with the configured OS multipliers applied. The report appears to omit free
+  public-repository usage, so these are the minutes that counted towards the
+  quota, with each repository's visibility as it was at the time. Unlike the
+  estimates, they include repositories since transferred out or deleted.</p>
   {_fig_html(fig)}
 """
 
@@ -473,7 +458,7 @@ def render_html(
         }
         comparison = _comparison_table(monthly, billing_view, scopes.private is not None)
 
-    billing_html = _billing_html(billing_view, scopes, config) if billing_view else ""
+    billing_html = _billing_html(billing_view, config) if billing_view else ""
     comparison_html = ""
     if not comparison.empty and (billing_view is not None or scopes.private is not None):
         comparison_html = f"""
@@ -622,24 +607,16 @@ def summary_metadata(
         billing_report = {
             "months": list(billing.usage.months),
             "missing_months": list(billing.usage.missing_months),
-            "billed_equivalent_minutes_period": billing.total(private=False),
+            "billed_equivalent_minutes_period": billing.total,
+            "estimated_monthly_billed_minutes": billing.monthly_average,
             "monthly_billed_equivalent_minutes": _column_by_month(
-                comparison, "Billed, all repos"
+                comparison, "Billed (GitHub report)"
             ),
             "actions_net_charge_usd": billing.net_charge,
             "months_at_cap": (
-                billing.months_at_cap(config.plan_minutes, private=private_summary is not None)
-                if config.plan_minutes
-                else []
+                billing.months_at_cap(config.plan_minutes) if config.plan_minutes else []
             ),
         }
-        if private_summary is not None:
-            billing_report |= {
-                "private_billed_equivalent_minutes_period": billing.total(private=True),
-                "private_monthly_billed_equivalent_minutes": _column_by_month(
-                    comparison, "Billed, private only"
-                ),
-            }
     return {
         "org": config.org,
         "period": config.period,

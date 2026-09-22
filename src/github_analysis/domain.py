@@ -296,8 +296,8 @@ class BillingUsageItem:
 
     Unlike :class:`Job`, which estimates billed minutes from timestamps, these
     are the quantities GitHub itself billed, aggregated per day, repository and
-    SKU. They carry no repository visibility: public-repository usage is listed
-    in the same way as private usage.
+    SKU. They carry no repository visibility, but the report appears to omit
+    free public-repository usage (see :mod:`github_analysis.billing`).
     """
 
     date: datetime | None
