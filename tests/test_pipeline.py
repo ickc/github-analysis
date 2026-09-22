@@ -215,6 +215,8 @@ def test_dashboard_with_billing_report(tmp_path: Path):
     assert billing["private_billed_equivalent_minutes_period"] == 67
     assert billing["private_monthly_billed_equivalent_minutes"] == {"2024-01": 11.0, "2024-02": 56.0}
     assert billing["actions_net_charge_usd"] == 0.4
+    assert billing["months_at_cap"] == ["2024-01", "2024-02"]  # plan cap of 5
+    assert "Usage beyond the cap is charged" in html
 
 
 def test_dashboard_with_billing_but_no_visibility(tmp_path: Path):

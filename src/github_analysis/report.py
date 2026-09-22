@@ -154,6 +154,17 @@ class _BillingView:
     def net_charge(self) -> float:
         return float(self.monthly["net_amount"].sum())
 
+    def months_at_cap(self, plan_minutes: float, *, private: bool) -> list[str]:
+        """Months whose billed-equivalent minutes reached ``plan_minutes``.
+
+        Billed usage stops at the cap when a spending limit blocks further
+        runs, so these months had demand the plan did not serve.
+        """
+        frame = self.private_monthly if private else self.monthly
+        by_month = frame.groupby("month")["adj_billed"].sum()
+        # Tolerance for fractional minutes summing to just under the cap.
+        return sorted(by_month[by_month >= plan_minutes - 0.5].index)
+
 
 # ---------------------------------------------------------------------------
 # Text blocks
@@ -210,6 +221,22 @@ def _insights(
             text += ")"
         text += f". The net Actions charge was <b>${billing.net_charge:,.2f}</b>."
         items.append(text)
+        if config.plan_minutes:
+            at_cap = billing.months_at_cap(
+                config.plan_minutes, private=private_summary is not None
+            )
+            if at_cap:
+                consequence = (
+                    "With no net charge, runs beyond the cap in those months were "
+                    "most likely blocked, so demand was higher than the billed "
+                    "figures show."
+                    if billing.net_charge == 0
+                    else "Usage beyond the cap is charged, as the net charge shows."
+                )
+                items.append(
+                    f"Billed usage reached the {config.plan_minutes:,.0f}-minute cap in "
+                    f"<b>{', '.join(at_cap)}</b>. {consequence}"
+                )
     items.extend(config.extra_insights_html)
     return items
 
@@ -600,6 +627,11 @@ def summary_metadata(
                 comparison, "Billed, all repos"
             ),
             "actions_net_charge_usd": billing.net_charge,
+            "months_at_cap": (
+                billing.months_at_cap(config.plan_minutes, private=private_summary is not None)
+                if config.plan_minutes
+                else []
+            ),
         }
         if private_summary is not None:
             billing_report |= {
