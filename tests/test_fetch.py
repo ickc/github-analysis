@@ -35,10 +35,10 @@ def test_list_account_repos_falls_back_to_user_endpoint(monkeypatch):
         return [{"name": "user-repo"}]
 
     monkeypatch.setattr(fetch, "github_api_paginate", fake_paginate)
-    repos = fetch.list_account_repos("ickc")
+    repos = fetch.list_account_repos("example-user")
 
     assert [r["name"] for r in repos] == ["user-repo"]
-    assert calls == ["/orgs/ickc/repos", "/users/ickc/repos"]
+    assert calls == ["/orgs/example-user/repos", "/users/example-user/repos"]
 
 
 def test_list_account_repos_reraises_non_404(monkeypatch):
